@@ -10,7 +10,10 @@ typedef enum MAX_SIZE
 
 typedef struct fixed_lenght_message
 {
-
+    char message_recipient[MAX_RECIPIENT_NAME_LENGHT];
+    char message_sender[MAX_MESSAGE_SENDER_NAME_LENGHT];
+    char message_subject[MAX_MESSAGE_SUBJECT_LENGHT];
+    char message_body[MAX_MESSAGE_LENGHT];
 } message;
 
 typedef struct variable_lenght_message
