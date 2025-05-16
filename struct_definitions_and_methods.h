@@ -1,20 +1,18 @@
 #include "main.c"
 
-#define MAX_MESSAGE_LENGHT
-#define MAX_MESSAGE_SUBJECT_LENGHT
-#define MAX_RECIPIENT_NAME_LENGHT
-#define MAX_SENDER_NAME_LENGHT
+typedef enum MAX_SIZE
+{
+    MAX_MESSAGE_LENGTH = 1024,
+    MAX_MESSAGE_SUBJECT_LENGTH = 256,
+    MAX_RECIPIENT_NAME_LENGTH = 64,
+    MAX_SENDER_NAME_LENGTH = 64
+} MAX_SIZE;
 
 typedef struct fixed_lenght_message
 {
 
-
-    
 } message;
 
 typedef struct variable_lenght_message
 {
-
-
-
 };
