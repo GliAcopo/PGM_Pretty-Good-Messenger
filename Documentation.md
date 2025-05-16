@@ -16,6 +16,7 @@ da utenti autorizzati (deve essere quindi previsto un meccanismo di autenticazio
 
 # Development choices:
 - I've chosen to develop a "concurrent server" instead of a sequential one.
+- The messages have a fixed lenght, 
 
 # Code Documentation
 
