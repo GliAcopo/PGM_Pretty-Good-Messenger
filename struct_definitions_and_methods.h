@@ -41,8 +41,8 @@ typedef struct variable_length_message
 /**
  * @brief Checks the length of the fields in a message for validity.
  *
- * This function validates the lengths of the provided message fields: recipient,
- * sender, subject, and body. Each field is checked to ensure it is not empty
+ * This function validates the lengths of the provided message fields: recipient, sender, subject, and body. 
+ * Each field is checked.
  * and does not exceed its respective maximum allowed length.
  *
  * If a field is found to be empty, or if it exceeds the maximum length,
@@ -53,6 +53,8 @@ typedef struct variable_length_message
  * @param message_subject Pointer to the subject string.
  * @param message_body Pointer to the body string.
  *
+ * @warning the function does not check for NULL pointers passed in parameters
+ * 
  * @return ERROR_CODE
  * - NO_ERROR if all fields are within valid length bounds.
  * - STRING_SIZE_INVALID if any field has length 0.
@@ -115,7 +117,7 @@ inline ERROR_CODE check_length_message_fields(char *message_recipient,
     return NO_ERROR;
 }
 
-inline void return_null_message(variable_length_message *message_struct)
+inline void null_message(variable_length_message *message_struct)
 {
     message_struct->message_recipient = NULL;
     message_struct->message_sender = NULL;
@@ -191,3 +193,4 @@ inline variable_length_message *SECURE_create_variable_length_message(char *mess
 
     return (retval) ? message_struct : NULL;
 }
+

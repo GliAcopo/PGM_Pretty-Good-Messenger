@@ -19,4 +19,5 @@ typedef enum ERROR_CODE
     /**   */
     STRING_SIZE_INVALID = -2,
     STRING_SIZE_EXCEEDING_MAXIMUM = -3,
+    TTY_ERROR = -4,
 } ERROR_CODE;
