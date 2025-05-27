@@ -32,6 +32,10 @@
 static inline ERROR_CODE authentication(char* username, char* password)
 {
     
+    printf("Username: ");
+    char* username;
+    fscanf(STDIN_FILENO, "%ms\n", &username);
+
     /* ---- We disable terminal echoing so password insertion is more secure ---- */
 
     struct termios oldt, newt;
@@ -62,7 +66,6 @@ static inline ERROR_CODE authentication(char* username, char* password)
         fclose(tty);
         return(TTY_ERROR);
     }
-
     
     char password[128];
     fgets(password, sizeof(password), tty);
@@ -77,6 +80,10 @@ static inline ERROR_CODE authentication(char* username, char* password)
     fclose(tty);
     return(NO_ERROR);
 };
+
+/* -------------------------------------------------------------------------- */
+/*                                 CLIENT LOOP                                */
+/* -------------------------------------------------------------------------- */
 
 static inline void function_selection(){};
 static inline void message(){};
