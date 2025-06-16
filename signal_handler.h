@@ -24,12 +24,13 @@ static void catch_all(int sig, siginfo_t *si, void *ucontext)
     // (void)si; (void)ucontext;       /* just to silence warnings*/
 
     const char *abbr = NULL;
-#ifdef __GLIBC__
+#ifdef __GLIBC__ /* If we do have GLIBC then we define it */
     abbr = sigabbrev_np(sig); /* returns abbreviated signal names "INT", "TERM", ...*/
 #endif
     const char *desc = strsignal(sig);
 
     char msg[128];
+    /** @todo: move these code blocks into the defines so that we do not need to check for conditions while running the program */
     if (abbr)
     { /* If abreviated name is available then we use it */
         snprintf(msg, sizeof msg,
