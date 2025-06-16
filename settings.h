@@ -16,7 +16,8 @@
 typedef enum ERROR_CODE
 {
     NO_ERROR = 0,
-    /**   */
+    ERROR = -1,
+    SYSCALL_ERROR = -5,
     STRING_SIZE_INVALID = -2,
     STRING_SIZE_EXCEEDING_MAXIMUM = -3,
     TTY_ERROR = -4,
