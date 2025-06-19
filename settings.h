@@ -27,5 +27,4 @@ typedef enum ERROR_CODE
     EXIT_PROGRAM = -99, // A return value that asks whoever called the program to explicitly close it, we don't close it here because there may be some unsaved work or other close routines to handle
 } ERROR_CODE;
 
-
-
+extern const char *program_name;
