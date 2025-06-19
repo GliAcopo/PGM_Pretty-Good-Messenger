@@ -58,8 +58,9 @@ ERROR_CODE install_signal_handler(void)
     }
     for (int s = 1; s < NSIG; ++s)
     {                                     /* These macros will expand to the actual number of the signal */
-        if (s == SIGKILL || s == SIGSTOP) /* cannot be caught so we just skip them */
-            continue;                     /* Basically a skip command for the loop */
+        if (s == SIGKILL || s == SIGSTOP){ /* cannot be caught so we just skip them */
+            continue;
+                            }                    /* Basically a skip command for the loop */
         if(sigaction(s, &sa, NULL) == -1)          /* ignore the errors we handle */
         {
             DEBUG_PRINT("Error: sigaction(%d) failed. Details: [%s]", s, strerror(errno));
