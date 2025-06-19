@@ -45,7 +45,7 @@ inline ERROR_CODE create_home_folder(void)
                full_path_name, sizeof(full_path_name));
         while (getchar() != '\n' && getchar() != EOF)
         {
-        }; // flush stdin in any case
+        };                                                          // flush stdin in any case
         read(STDIN_FILENO, full_path_name, sizeof(full_path_name)); // read path and put it into the variable
         break;                                                      // Other checks are done above
     default:
@@ -106,3 +106,8 @@ success:
 | `0555` | r-xr-xr-x | Read/execute for everyone (no write)        |
 
  */
+
+ int main(){
+    printf("%s", convert_error_code_to_string(create_home_folder()));
+    return (0);
+ }
