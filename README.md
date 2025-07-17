@@ -1,5 +1,3 @@
-
-
 # Assignment
 Realizzazione di un servizio di scambio messaggi supportato tramite un server
 sequenziale o concorrente (a scelta). Il servizio deve accettare messaggi
@@ -35,4 +33,5 @@ Despite the additional validation, `SECURE` functions are guaranteed to produce 
 
 Note that `SECURE` functions may accept different input parameters compared to their standard equivalents. Any such differences will be clearly documented using Doxygen comments.
 
-###  
+
+Take a look at 1-Server.c for Comments
