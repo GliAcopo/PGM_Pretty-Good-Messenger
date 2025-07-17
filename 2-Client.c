@@ -135,6 +135,13 @@ success:
 
 int main(int argc, char** argv)
 {
-    
+    printf("Welcome to PGM client!\n");
+    p("Testing p macro");
+    pe("Testing pe macro");
+    DEBUG_PRINT("Testing DEBUG_PRINT macro");
+    p("Printing ascii art and name");
+    fprintf(stdout, "%s", ascii_art);
+    fprintf(stdout, "%s\n", program_name);
+    p("Exiting program");
     return(0);
 }

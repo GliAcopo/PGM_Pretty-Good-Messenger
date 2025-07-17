@@ -48,7 +48,7 @@ CFLAGS   := -g -O0 -Wall -Wextra -pedantic \
             -Wformat=2 -Wstrict-overflow=5 -Wundef \
             -Werror=return-type -Wuninitialized -Wmaybe-uninitialized \
             -fstack-protector-strong \
-            -fsanitize=address,undefined,leak,coverage \
+            -fsanitize=address,undefined,leak --coverage \
             -MMD -MP                # auto‑generate .d dependency files
 
 # EXECUTABLES DIRECTORY
