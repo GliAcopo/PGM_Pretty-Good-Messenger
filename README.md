@@ -1,4 +1,4 @@
-# [chat suggestions](https://chatgpt.com/c/682e06f9-124c-8008-9104-434aeff7d43e)
+
 
 # Assignment
 Realizzazione di un servizio di scambio messaggi supportato tramite un server
