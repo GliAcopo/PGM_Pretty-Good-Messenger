@@ -19,10 +19,13 @@
 
 #define DEBUG 1
 #ifdef DEBUG
-#define DEBUG_PRINT(fmt, ...) \
-    fprintf(stderr, "[%s:%s:%d] " fmt "\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__)
+#define DEBUG_PRINT(fmt, ...) fprintf(stderr, "[%s:%s:%d] " fmt "\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__)
+#define pe(fmt, ...) fprintf(stderr, "[%s:%s:%d] " fmt " Strerror output: [%s]\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__, strerror(errno))
+#define p(fmt, ...)  fprintf(stdout, fmt"\n", ##__VA_ARGS__)
 #else
 #define DEBUG_PRINT(fmt, ...)
+#define pe(fmt, ...)
+#define p(fmt, ...)
 #endif
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
