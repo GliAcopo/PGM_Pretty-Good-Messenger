@@ -54,39 +54,59 @@ CFLAGS   := -g -O0 -Wall -Wextra -pedantic \
 # EXECUTABLES DIRECTORY
 EXEC_DIR := executables
 
+# /////////////////// Custom BUILD directory flags (So that build objects stay out of my way) /////////////////// #
+BUILD_DIR    := build
+OBJ_DIR      := $(BUILD_DIR)/objs       # .o   .d   .gcno files
+GCOV_DIR     := $(BUILD_DIR)/gcovdata   # final executables
+BIN_DIR      := $(BUILD_DIR)/bin        # .gcda runtime output
+# We add flags to the compiler and the linker so that they know where to store the files
+# Coverage flags (compile & link)
+COVFLAGS  := --coverage -fprofile-dir=$(GCOV_DIR)
+CFLAGS   += $(COVFLAGS)
+LDFLAGS  += $(COVFLAGS)
+
+# ////////////////////////////////////////////// SOURCE FILE LISTS ////////////////////////////////////////////// #
+
 SRCS_SHARED := 3-Global-Variables-and-Functions.c
 
 SERVER_SRCS := 1-Server.c $(SRCS_SHARED)
 CLIENT_SRCS := 2-Client.c $(SRCS_SHARED)
 
-SERVER_OBJS := $(SERVER_SRCS:.c=.o)
-CLIENT_OBJS := $(CLIENT_SRCS:.c=.o)
+# Objects live in OBJ_DIR
+SERVER_OBJS  := $(patsubst %.c,$(OBJ_DIR)/%.o,$(SERVER_SRCS))
+CLIENT_OBJS  := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CLIENT_SRCS))
 
 SERVER_BIN  := $(EXEC_DIR)/server
 CLIENT_BIN  := $(EXEC_DIR)/client
 
+# Dependency‑file names mirror the objects (foo.o → foo.d)
+DEPS         := $(SERVER_OBJS:.o=.d) $(CLIENT_OBJS:.o=.d)
+
 .PHONY: all server client clean dirs
 
-# Default ‑ build the server.
+# ///////////////////////////////////////// Default ‑ build the server. ///////////////////////////////////////// #
 all: server
 
 # ----------------------------------------------------------------
-# Targets
+# Link targets
 # ----------------------------------------------------------------
-server: dirs $(SERVER_BIN)
-client: dirs $(CLIENT_BIN)
+server: $(SERVER_BIN)
+client: $(CLIENT_BIN)
 
 $(SERVER_BIN): $(SERVER_OBJS)
-	$(CC) $(CFLAGS) $^ -o $@
+	@mkdir -p $(dir $@)
+	$(CC) $(LDFLAGS) $^ -o $@
 
 $(CLIENT_BIN): $(CLIENT_OBJS)
-	$(CC) $(CFLAGS) $^ -o $@
+	@mkdir -p $(dir $@)
+	$(CC) $(LDFLAGS) $^ -o $@
 
 # ----------------------------------------------------------------
-# Pattern rule: compile .c → .o (headers handled via -MMD/-MP)
+# Pattern rule: compile .c → .o (headers handled via -MMD/-MP) (object (+ .d file))
 # ----------------------------------------------------------------
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+$(OBJ_DIR)/%.o: %.c
+	@mkdir -p $(dir $@) $(GCOV_DIR)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 # ----------------------------------------------------------------
 # House‑keeping
@@ -94,11 +114,12 @@ $(CLIENT_BIN): $(CLIENT_OBJS)
 dirs:
 	@mkdir -p $(EXEC_DIR)
 
-clean:
-	$(RM) $(SERVER_OBJS) $(CLIENT_OBJS) $(SERVER_BIN) $(CLIENT_BIN) *.d
+#clean:
+#	$(RM) $(SERVER_OBJS) $(CLIENT_OBJS) $(SERVER_BIN) $(CLIENT_BIN) *.d
 
-# ----------------------------------------------------------------
-# Include auto‑generated dependency files if they exist
-# ----------------------------------------------------------------
--include $(SERVER_OBJS:.o=.d) $(CLIENT_OBJS:.o=.d)
+clean: # since we keep everything in the build dir to clean we can just remove it
+	@rm -rf $(BUILD_DIR)
+	@echo "Build directory removed."
 
+# //////////////////////////////////////// Automatic header dependencies //////////////////////////////////////// #
+-include $(DEPS)
