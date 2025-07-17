@@ -17,7 +17,7 @@
  * @param code The ERROR_CODE value to convert.
  * @return A constant string representing the error code. If the code is not recognized, "UNKNOWN_ERROR_CODE" is returned.
  */
-inline const char *convert_error_code_to_string(ERROR_CODE code)
+inline const char *convert_error_code_to_string(const ERROR_CODE code)
 {
     switch (code)
     {

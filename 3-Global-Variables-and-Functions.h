@@ -1,4 +1,17 @@
+/**
+ * @file 3-Global-Variables-and-Functions.h
+ * @author Jacopo Rizzuto (jacoporizzuto04@gmail.com)
+ * @brief .h File in wich variables, constants, parameters and functions are used both by client code and Server code.
+ * @version 0.1
+ * @date 2025-07-17
+ *
+ * @copyright Copyright (c) 2025
+ *
+ */
+
 #pragma once /* only stops a header from being included more than once within the same translation unit, it does nothing to prevent each .c file that does #include "settings.h" from getting its own copy of everything in that header */
+
+
 
 #include <stdio.h> /* For stderr */
 

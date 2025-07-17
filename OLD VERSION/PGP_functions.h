@@ -91,7 +91,8 @@ inline ERROR_CODE create_home_folder(void)
         }
     }
     printf("Directory created successfully: %s\n", full_path_name);
-success:
+    
+    success:
     return (NO_ERROR);
 }
 /** mkdir modes:

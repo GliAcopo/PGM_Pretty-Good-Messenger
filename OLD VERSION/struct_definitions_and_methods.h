@@ -1,3 +1,5 @@
+#pragma once /* only stops a header from being included more than once within the same translation unit, it does nothing to prevent each .c file that does #include "settings.h" from getting its own copy of everything in that header */
+
 #include "settings.h"
 #include <stddef.h> /* For the definition of NULL*/
 

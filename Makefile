@@ -1,5 +1,9 @@
-# Compiler
-CC = gcc
+# ---------------------------------------------------------------
+#                       COMPILATION PRESETS
+# ---------------------------------------------------------------
+
+#  COMPILER
+CC       := gcc
 
 # ------------------------------ Compiler Flags ------------------------------ #
 # -Wall                : Enable all the common warning messages
@@ -18,62 +22,65 @@ CC = gcc
 # -fstack-protector-strong: Adds stack overflow protection for local buffers
 # -fsanitize=address       : Detect heap, stack, and global buffer overflows and use-after-free bugs
 # -fsanitize=undefined     : Detect undefined behavior (e.g., signed integer overflow, null deref)
-CFLAGS = -g -O0 -Wall -Wextra -pedantic \
-               -Wshadow -Wconversion -Wdouble-promotion \
-               -Wformat=2 -Wstrict-overflow=5 -Wundef \
-               -Werror=return-type -Wuninitialized -Wmaybe-uninitialized \
-               -fstack-protector-strong \
-               -fsanitize=address -fsanitize=undefined
 
-# ------------------------------- Source files ------------------------------- #
-# wildcard = find all files matching the given pattern
-SRCS = $(wildcard *.c)
+# –g for debug, –O0 to keep the code un‑optimised while debugging
+# Lots of warnings + ASan + UBSan
+CFLAGS   := -g -O0 -Wall -Wextra -pedantic \
+            -Wshadow -Wconversion -Wdouble-promotion \
+            -Wformat=2 -Wstrict-overflow=5 -Wundef \
+            -Werror=return-type -Wuninitialized -Wmaybe-uninitialized \
+            -fstack-protector-strong \
+            -fsanitize=address -fsanitize=undefined \
+            -MMD -MP                # auto‑generate .d dependency files
 
-# Convert each .c filename in SRCS to a corresponding .o filename
-OBJS = $(SRCS:.c=.o)
+# EXECUTABLES DIRECTORY
+EXEC_DIR := executables
 
-# ------------------------ Rule to build object files ------------------------ #
-# How to compile each .c file into a .o file
-# $< = first dependency (i.e., the .c file)
-# $@ = target file (i.e., the .o file)
-%.o: %.c 
-	$(CC) $(CFLAGS) -c $< -o $@
+SRCS_SHARED := 3-Global-Variables-and-Functions.c
 
-# ---------------------------------------------------------------------------- #
-#                              COMPILATION PRESETS                             #
-# ---------------------------------------------------------------------------- #
+SERVER_SRCS := 1-Server.c $(SRCS_SHARED)
+CLIENT_SRCS := 2-Client.c $(SRCS_SHARED)
 
-#OLD ALL PRESET
-#all: $(TARGET)
-# If OBJS change, recompile and link them to make the final executable
-# $@ = name of the target (i.e., $(TARGET))
-# $^ = all dependencies (i.e., $(OBJS))
-#$(TARGET): $(OBJS) $(CC) $(CFLAGS) $(SRCS) -o $@ $^
+SERVER_OBJS := $(SERVER_SRCS:.c=.o)
+CLIENT_OBJS := $(CLIENT_SRCS:.c=.o)
 
-EXEC_DIR = executables
-TARGET   = $(EXEC_DIR)/main
+SERVER_BIN  := $(EXEC_DIR)/server
+CLIENT_BIN  := $(EXEC_DIR)/client
 
-# Sice the test files have each a main file we have to filter it out during normal building
-SRCS_APP = $(filter-out test_*.c,$(SRCS))
-OBJS_APP = $(SRCS_APP:.c=.o)
+.PHONY: all server client clean dirs
 
-all: $(TARGET)
+# Default ‑ build the server.
+all: server
 
-$(TARGET): $(OBJS_APP)
-	mkdir -p $(EXEC_DIR)
+# ----------------------------------------------------------------
+# Targets
+# ----------------------------------------------------------------
+server: dirs $(SERVER_BIN)
+client: dirs $(CLIENT_BIN)
+
+$(SERVER_BIN): $(SERVER_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@
 
-TEST_SRCS    = $(wildcard TEST_*.c)
-TEST_TARGETS = $(patsubst %.c,$(EXEC_DIR)/%,$(TEST_SRCS))
+$(CLIENT_BIN): $(CLIENT_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@
 
-test: $(TEST_TARGETS)
+# ----------------------------------------------------------------
+# Pattern rule: compile .c → .o (headers handled via -MMD/-MP)
+# ----------------------------------------------------------------
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
-$(EXEC_DIR)/%: %.c
-	mkdir -p $(EXEC_DIR)
-	$(CC) $(CFLAGS) $< -o $@
-
-.PHONY: all test clean
+# ----------------------------------------------------------------
+# House‑keeping
+# ----------------------------------------------------------------
+dirs:
+	@mkdir -p $(EXEC_DIR)
 
 clean:
-	rm -rf $(EXEC_DIR) *.o
+	$(RM) $(SERVER_OBJS) $(CLIENT_OBJS) $(SERVER_BIN) $(CLIENT_BIN) *.d
+
+# ----------------------------------------------------------------
+# Include auto‑generated dependency files if they exist
+# ----------------------------------------------------------------
+-include $(SERVER_OBJS:.o=.d) $(CLIENT_OBJS:.o=.d)
 
