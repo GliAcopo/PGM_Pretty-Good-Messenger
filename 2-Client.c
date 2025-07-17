@@ -20,11 +20,13 @@
 #include <string.h> // String concatenation
 #include <unistd.h> // for read
 
-/* -------------------------------------------------------------------------- */
-/*                           PGP ENCYPTION FUNCTIONS                          */
-/* -------------------------------------------------------------------------- */
 
-/* -------------------------- HOME FOLDER CREATION -------------------------- */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                            PGP ENCYPTION FUNCTIONS                                            */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+// #region PGP
+
+/* //////////////////////////////////////////// HOME FOLDER CREATION /////////////////////////////////////////// */
 
 inline ERROR_CODE create_home_folder(void)
 {
@@ -114,19 +116,20 @@ inline ERROR_CODE create_home_folder(void)
 success:
     return (NO_ERROR);
 }
-/** mkdir modes:
- * | Mode   | Octal     | Meaning                                     |
-| ------ | --------- | ------------------------------------------- |
-| `0700` | rwx------ | Only owner can read, write, execute         |
-| `0750` | rwxr-x--- | Owner: all, Group: read+execute             |
-| `0755` | rwxr-xr-x | Owner: all, Group/Others: read+execute      |
-| `0770` | rwxrwx--- | Owner + Group: all, Others: none            |
-| `0777` | rwxrwxrwx | Everyone can read, write, execute (!!!)      |
-| `0644` | rw-r--r-- | Usually for files: Owner write, others read |
-| `0555` | r-xr-xr-x | Read/execute for everyone (no write)        |
+                                /** mkdir modes:
+                                 * | Mode   | Octal     | Meaning                                     |
+                                | ------ | --------- | ------------------------------------------- |
+                                | `0700` | rwx------ | Only owner can read, write, execute         |
+                                | `0750` | rwxr-x--- | Owner: all, Group: read+execute             |
+                                | `0755` | rwxr-xr-x | Owner: all, Group/Others: read+execute      |
+                                | `0770` | rwxrwx--- | Owner + Group: all, Others: none            |
+                                | `0777` | rwxrwxrwx | Everyone can read, write, execute (!!!)      |
+                                | `0644` | rw-r--r-- | Usually for files: Owner write, others read |
+                                | `0555` | r-xr-xr-x | Read/execute for everyone (no write)        |
 
- */
+                                 */
+// #endregion
 
-/* -------------------------------------------------------------------------- */
-/*                                  MAIN LOOP                                 */
-/* -------------------------------------------------------------------------- */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                                   MAIN LOOP                                                   */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
