@@ -51,10 +51,10 @@ CFLAGS   := -g -O0 -Wall -Wextra -pedantic \
             -fsanitize=address,undefined,leak --coverage \
             -MMD -MP                # auto‑generate .d dependency files
 
+# /////////////////// Custom BUILD directory flags (So that build objects stay out of my way) /////////////////// #
 # EXECUTABLES DIRECTORY
 EXEC_DIR := executables
-
-# /////////////////// Custom BUILD directory flags (So that build objects stay out of my way) /////////////////// #
+# Builds
 BUILD_DIR    := build
 OBJ_DIR      := $(BUILD_DIR)/objs       # .o   .d   .gcno files
 GCOV_DIR     := $(BUILD_DIR)/gcovdata   # final executables
@@ -84,6 +84,8 @@ DEPS         := $(SERVER_OBJS:.o=.d) $(CLIENT_OBJS:.o=.d)
 
 .PHONY: all server client clean dirs
 
+
+
 # ///////////////////////////////////////// Default ‑ build the server. ///////////////////////////////////////// #
 all: server
 
@@ -104,7 +106,11 @@ $(CLIENT_BIN): $(CLIENT_OBJS)
 # ----------------------------------------------------------------
 # Pattern rule: compile .c → .o (headers handled via -MMD/-MP) (object (+ .d file))
 # ----------------------------------------------------------------
-$(OBJ_DIR)/%.o: %.c
+# Make sure the three build directories exist
+$(BIN_DIR) $(GCOV_DIR):
+	@mkdir -p $@
+
+$(OBJ_DIR)/%.o : %.c
 	@mkdir -p $(dir $@) $(GCOV_DIR)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
