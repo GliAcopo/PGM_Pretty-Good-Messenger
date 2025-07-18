@@ -2,9 +2,6 @@
 #                       COMPILATION PRESETS
 # ---------------------------------------------------------------
 
-#  COMPILER
-CC       := gcc
-
 # ------------------------------ Compiler Flags ------------------------------ #
 # -Wall                                 : Enable all the common warning messages
 # -Wextra                               : Enable extra warning messages not covered by -Wall
@@ -43,89 +40,64 @@ CC       := gcc
 
 # –g for debug, –O0 to keep the code un‑optimised while debugging
 # Lots of warnings + ASan + UBSan
-CFLAGS   := -g -O0 -Wall -Wextra -pedantic \
-            -Wshadow -Wconversion -Wdouble-promotion \
-            -Wformat=2 -Wstrict-overflow=5 -Wundef \
-            -Werror=return-type -Wuninitialized -Wmaybe-uninitialized \
-            -fstack-protector-strong \
-            -fsanitize=address,undefined,leak --coverage \
-            -MMD -MP                # auto‑generate .d dependency files
+# Top‑level Makefile
+# Usage:
+#   make server    # build ./bin/server
+#   make client    # build ./bin/client
+#   make           # build both targets
+#   make clean     # remove all build artefacts
+#
+# Directory layout (auto‑created if missing):
+#   ./build    – object (.o) and dependency (.d) files
+#   ./bin      – final executables
 
-# /////////////////// Custom BUILD directory flags (So that build objects stay out of my way) /////////////////// #
-# EXECUTABLES DIRECTORY
-EXEC_DIR := executables
-# Builds
-BUILD_DIR    := build
-OBJ_DIR      := $(BUILD_DIR)/objs       # .o   .d   .gcno files
-GCOV_DIR     := $(BUILD_DIR)/gcovdata   # final executables
-BIN_DIR      := $(BUILD_DIR)/bin        # .gcda runtime output
-# We add flags to the compiler and the linker so that they know where to store the files
-# Coverage flags (compile & link)
-COVFLAGS  := --coverage -fprofile-dir=$(GCOV_DIR)
-CFLAGS   += $(COVFLAGS)
-LDFLAGS  += $(COVFLAGS)
+CC      := gcc
+CFLAGS  := -std=c11 -g -O0 -Wall -Wextra -pedantic \
+           -Wshadow -Wconversion -Wdouble-promotion \
+           -Wformat=2 -Wstrict-overflow=5 -Wundef \
+           -Werror=return-type -Wuninitialized -Wmaybe-uninitialized \
+           -fstack-protector-strong \
+           -fsanitize=address,undefined,leak --coverage \
+           -MMD -MP
 
-# ////////////////////////////////////////////// SOURCE FILE LISTS ////////////////////////////////////////////// #
+SRC_DIR := .
+OBJ_DIR := build
+BIN_DIR := bin
 
-SRCS_SHARED := 3-Global-Variables-and-Functions.c
+SERVER_SRCS := 1-Server.c 3-Global-Variables-and-Functions.c
+CLIENT_SRCS := 2-Client.c 3-Global-Variables-and-Functions.c
 
-SERVER_SRCS := 1-Server.c $(SRCS_SHARED)
-CLIENT_SRCS := 2-Client.c $(SRCS_SHARED)
+SERVER_OBJS := $(SERVER_SRCS:%.c=$(OBJ_DIR)/%.o)
+CLIENT_OBJS := $(CLIENT_SRCS:%.c=$(OBJ_DIR)/%.o)
 
-# Objects live in OBJ_DIR
-SERVER_OBJS  := $(patsubst %.c,$(OBJ_DIR)/%.o,$(SERVER_SRCS))
-CLIENT_OBJS  := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CLIENT_SRCS))
-
-SERVER_BIN  := $(EXEC_DIR)/server
-CLIENT_BIN  := $(EXEC_DIR)/client
-
-# Dependency‑file names mirror the objects (foo.o → foo.d)
-DEPS         := $(SERVER_OBJS:.o=.d) $(CLIENT_OBJS:.o=.d)
+SERVER_DEPS := $(SERVER_OBJS:.o=.d)
+CLIENT_DEPS := $(CLIENT_OBJS:.o=.d)
 
 .PHONY: all server client clean dirs
 
+all: server client
 
+server: $(BIN_DIR)/server
+client: $(BIN_DIR)/client
 
-# ///////////////////////////////////////// Default ‑ build the server. ///////////////////////////////////////// #
-all: server
+$(BIN_DIR)/server: $(SERVER_OBJS) | dirs
+	$(CC) $(CFLAGS) $^ -o $@
 
-# ----------------------------------------------------------------
-# Link targets
-# ----------------------------------------------------------------
-server: $(SERVER_BIN)
-client: $(CLIENT_BIN)
+$(BIN_DIR)/client: $(CLIENT_OBJS) | dirs
+	$(CC) $(CFLAGS) $^ -o $@
 
-$(SERVER_BIN): $(SERVER_OBJS)
-	@mkdir -p $(dir $@)
-	$(CC) $(LDFLAGS) $^ -o $@
+# Pattern rule for every object file.
+# The -MF flag ensures the .d file is written next to the .o object inside $(OBJ_DIR).
+$(OBJ_DIR)/%.o: %.c | dirs
+	$(CC) $(CFLAGS) -c $< -o $@ -MF $(patsubst %.o,%.d,$@)
 
-$(CLIENT_BIN): $(CLIENT_OBJS)
-	@mkdir -p $(dir $@)
-	$(CC) $(LDFLAGS) $^ -o $@
-
-# ----------------------------------------------------------------
-# Pattern rule: compile .c → .o (headers handled via -MMD/-MP) (object (+ .d file))
-# ----------------------------------------------------------------
-# Make sure the three build directories exist
-$(BIN_DIR) $(GCOV_DIR):
-	@mkdir -p $@
-
-$(OBJ_DIR)/%.o : %.c
-	@mkdir -p $(dir $@) $(GCOV_DIR)
-	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
-
-# ----------------------------------------------------------------
-# House‑keeping
-# ----------------------------------------------------------------
 dirs:
-	@mkdir -p $(EXEC_DIR)
+	@mkdir -p $(OBJ_DIR) $(BIN_DIR)
 
-#clean:
-#	$(RM) $(SERVER_OBJS) $(CLIENT_OBJS) $(SERVER_BIN) $(CLIENT_BIN) *.d
+clean:
+	@$(RM) -r $(OBJ_DIR) $(BIN_DIR)
 
-clean: # since we keep everything in the build dir to clean we can just remove it
-	@rm -rf $(BUILD_DIR)
-	@echo "Build directory removed."
+# Automatically pull in dependency files if they exist.
+-include $(SERVER_DEPS) $(CLIENT_DEPS)
 
-# //////////////////////////////////////// Automatic header dependencies //////////////////////////////////////// #
--include $(DEPS)
+
