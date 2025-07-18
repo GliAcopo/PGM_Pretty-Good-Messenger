@@ -8,3 +8,4 @@
  * @copyright Copyright (c) 2025
  *
  */
+#pragma once /** @note Not truly necessary but you never know...*/

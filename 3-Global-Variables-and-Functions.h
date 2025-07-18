@@ -11,7 +11,9 @@
 
 #pragma once /* only stops a header from being included more than once within the same translation unit, it does nothing to prevent each .c file that does #include "settings.h" from getting its own copy of everything in that header */
 
-#include <stdio.h> /* For stderr */
+#include <stdio.h>  /* For stderr */
+#include <errno.h>  /* For errno */
+#include <string.h> /* For strerror */
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                           GLOBAL MACROS DEFINITIONS                                           */
@@ -21,7 +23,7 @@
 #ifdef DEBUG
 #define DEBUG_PRINT(fmt, ...) fprintf(stderr, "[%s:%s:%d] " fmt "\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 #define pe(fmt, ...) fprintf(stderr, "[%s:%s:%d] " fmt " (Strerror output: [%s])\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__, strerror(errno))
-#define p(fmt, ...)  fprintf(stdout, fmt"\n", ##__VA_ARGS__)
+#define p(fmt, ...) fprintf(stdout, fmt "\n", ##__VA_ARGS__)
 #else
 #define DEBUG_PRINT(fmt, ...)
 #define pe(fmt, ...)
@@ -46,6 +48,12 @@ typedef enum ERROR_CODE
     OPERATION_ABORTED = -6,
     EXIT_PROGRAM = -99, // A return value that asks whoever called the program to explicitly close it, we don't close it here because there may be some unsaved work or other close routines to handle
 } ERROR_CODE;
+
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                              HOME FOLDER CREATION                                             */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+
+extern inline ERROR_CODE create_home_folder(void);
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                           PROGRAM NAME AND ASCII ART                                          */
