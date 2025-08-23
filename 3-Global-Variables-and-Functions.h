@@ -50,6 +50,19 @@ typedef enum ERROR_CODE
 } ERROR_CODE;
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                              LOGIN ENVIRONMENT                                                */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/** 
+ * To sustain a user session we only need the name, there is no need for an explicit password because only the two following situations can occur
+ * 1. The user is registered, so we can check whether the communicated ssh key matches the one in the <user-name>-ssh.pubkey
+ * 2. The user is not registered, in that case we can ask if he wants to get registered.
+ */
+typedef struct login_session_environment {
+	char user_name[64];
+	char RSA-2048_key[256];
+}
+
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              HOME FOLDER CREATION                                             */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 

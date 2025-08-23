@@ -35,3 +35,20 @@ Note that `SECURE` functions may accept different input parameters compared to t
 
 
 Take a look at 1-Server.c for Comments
+
+
+## Security and Encryption
+
+The app is built with a strong focus on security. The encryption model follows a PGP-style (Pretty Good Privacy) approach, drawing inspiration from Phil Zimmermann’s principles of privacy. Hence the name **PGM (Pretty Good Messenger)**.
+
+**At no point during message transmission is the server able to decrypt user messages.**
+When Client1 encrypts a message using Client2’s public key, only Client2 can decrypt it with their private key. The server merely relays the ciphertext and cannot access the plaintext (assuming it does not tamper with the data).
+
+*Note: only message content is encrypted; sender, recipient, and other metadata may not be.*
+
+On the server side, messages are stored in files named after the recipients’ usernames. Each message remains encrypted with the recipient’s **public key**, ensuring that even the server cannot read its contents.
+
+For cryptographic operations, the app uses **RSA-2048 keys** generated via the `OpenSSL` library. These keys handle both authentication and message encryption. If `OpenSSL` is not installed or otherwise unavailable, the application will notify the user at startup.
+
+### Authentication
+By taking advantage of the The authentication method is very simple, 
