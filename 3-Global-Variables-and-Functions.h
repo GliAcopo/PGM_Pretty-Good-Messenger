@@ -73,7 +73,7 @@ extern const char *convert_error_code_to_string(const ERROR_CODE code)
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
 enum sizes{
-    MESSAGE_SIZE_CHARS = 4096,
+    MESSAGE_SIZE_CHARS = 4096, // 4096
     RSA-KEY_SIZE_BYTES = 256, // RSA-2048 BITS 256 bytes
     UDERNAME_SIZE_CHARS = 64,
 }
