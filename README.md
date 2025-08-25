@@ -27,14 +27,28 @@ da utenti autorizzati (deve essere quindi previsto un meccanismo di autenticazio
 # Code Documentation
 
 ## SECURE functions
-Functions prefixed with `SECURE` in their name perform all kinds of security checks on inputs and other critical elements of the case. So they can be considered "secure" at the cost of the performance needed to perform all the security checks.
+Functions prefixed with `SECURE` in their name or DOXYGEN comments perform all kinds of security checks on inputs and other critical elements of the case. So they can be considered "secure" at the cost of the performance needed to perform all the security checks.
 
 Despite the additional validation, `SECURE` functions are guaranteed to produce the same output as their `non-SECURE` counterparts under normal conditions. This ensures full compatibility and consistency, allowing developers to switch between versions without altering the expected behavior of their applications.
 
 Note that `SECURE` functions may accept different input parameters compared to their standard equivalents. Any such differences will be clearly documented using Doxygen comments.
 
+## Code optimizations
+I've tried to optimize the code to the best of my abilities and knowledge, while maintaining overall readability.
 
-Take a look at 1-Server.c for Comments
+### Conditional Jumps optimizations
+`__builtin_expect(condition, expected_outcome)` is a compiler extension available in GCC that hints the compiler what is the expected outcome of the condition evaluation.
+By doing this the compiler will optimize the code accordingly for conditional jumps.
+It’s particularly useful for the sanity checks and error checks scattered throughout my code, where errors are very unlikely but must still be tested for—without wasting unnecessary processor cycles.
+
+I have made two macros in order to make the code easier to read, they can be found in the `3-Global-Variables-and-Functions.h` file.
+```c
+/* --- BUILTIN EXPECT CONDITIONAL JUMP COMPILER HELPERS --- */
+// Probably evaluates to true
+#define likely(condition) __builtin_expect(condition, 1)
+// Probably evaluates to false
+#define unlikely(condition) __builtin_expect(condition, 0)
+```
 
 
 ## Security and Encryption

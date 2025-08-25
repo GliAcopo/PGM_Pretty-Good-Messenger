@@ -12,6 +12,9 @@
 #include "3-Global-Variables-and-Functions.h"
 #include "1-Server.h"
 
+// ierror, an internal debug substitute to errno
+ERROR_CODE ierrno = NO_ERROR;
+
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                                   MAIN LOOP                                                   */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */

@@ -12,6 +12,9 @@
 #include "3-Global-Variables-and-Functions.h" 
 #include <unistd.h>
 
+// ierror, an internal debug substitute to errno
+ERROR_CODE ierrno = NO_ERROR;
+
 /**
  * @brief Converts an ERROR_CODE enum value to its corresponding string representation.
  *
@@ -40,6 +43,8 @@ const char *convert_error_code_to_string(const ERROR_CODE code)
         return "SYSCALL_ERROR";
     case OPERATION_ABORTED:
         return "OPERATION_ABORTED";
+    case NULL_PARAMETERS:
+	return "NULL_PARAMETERS";
     case EXIT_PROGRAM:
         return "EXIT_PROGRAM";
     default:
@@ -47,6 +52,40 @@ const char *convert_error_code_to_string(const ERROR_CODE code)
     }
 }
 
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                              MESSAGE STRUCT CREATION                                          */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+
+inline ERROR_CODE verify_message_integrity(MESSAGE* message)
+{
+
+}
+
+/*
+ * @note: initialize MESSAGE structure on stack before function call
+ * */
+inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* message)
+{
+	// unlikely macro comes from the "Global variables and function.h" file and uses __builtin_expect() gcc compiler macro
+	// Unlikely means that the condition probably evaluates to false
+	if(unlikely(login_env == NULL || message == NULL)){
+		ierrno = NULL_PARAMETERS;
+		PIE("");
+		return(NULL_PARAMETERS);
+	}
+	
+	message->sender = login_env->sender;
+	// Reads 64 bytes or less then stops
+	printf("sender: %.64s\n", message->sender);
+	message->receiver = login_env->receiver;	
+	printf("receiver: %.64s\n", message->receiver);
+
+	// @todo: WRITE MESSAGE BY GETTING IT FROM TERMINAL
+	// ASK IF THEY WANT TO MODIFY
+	// ENCRYPT MESSAGE?
+	
+	return(NO_ERROR);
+}
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              HOME FOLDER CREATION                                             */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */

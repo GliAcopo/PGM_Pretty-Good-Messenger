@@ -19,16 +19,31 @@
 /*                                           GLOBAL MACROS DEFINITIONS                                           */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
+/* --- DEBUG --- */
 #define DEBUG 1
+
 #ifdef DEBUG
-#define DEBUG_PRINT(fmt, ...) fprintf(stderr, "[%s:%s:%d] " fmt "\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__)
-#define pe(fmt, ...) fprintf(stderr, "[%s:%s:%d] " fmt " (Strerror output: [%s])\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__, strerror(errno))
-#define p(fmt, ...) fprintf(stdout, fmt "\n", ##__VA_ARGS__)
+// PRINT DEBUG MESSAGE WITH FILE:FUNCTION:LINE METADATA WITHOUT INTERROGATING PERROR
+#define PD(fmt, ...) fprintf(stderr, "[%s:%s:%d] " fmt "\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__)
+// PRINT SYSCALL/SYSTEM ERROR WITH FILE:FUNCTION:LINE AND INTERROGATING PERROR
+#define PSE(fmt, ...) fprintf(stderr, "[%s:%s:%d] " fmt " (Strerror output: [%s])\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__, strerror(errno))
+// PRINT INTERNAL ERROR WITH FILE:FUNCTION:LINE AND PRINTING INTERNAL ERROR_CODE
+#define PIE(fmt, ...) fprintf(stderr, "[%s:%s:%d] " fmt " (Internal ERROR_CODE: [%s])\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__, convert_error_code_to_string(GLOBAL_ERROR_CODE))
+// SIMPLE PRINT STATEMENT ON STDOUT
+#define P(fmt, ...) fprintf(stdout, fmt "\n", ##__VA_ARGS__)
 #else
 #define DEBUG_PRINT(fmt, ...)
-#define pe(fmt, ...)
-#define p(fmt, ...)
+#define PSE(fmt, ...)
+#define PIE(fmt, ...)
+#define P(fmt, ...)
 #endif
+
+/* --- BUILTIN EXPECT CONDITIONAL JUMP COMPILER HELPERS --- */
+// Probably evaluates to true
+#define likely(condition) __builtin_expect(condition, 1)
+// Probably evaluates to false
+#define unlikely(condition) __builtin_expect(condition, 0)
+
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                           ERROR_CODE ENUM DEFINITION                                          */
@@ -46,8 +61,36 @@ typedef enum ERROR_CODE
     TTY_ERROR = -4,
     SYSCALL_ERROR = -5,
     OPERATION_ABORTED = -6,
+    // NULL passed as parameters to function
+    NULL_PARAMETERS = -7, 
     EXIT_PROGRAM = -99, // A return value that asks whoever called the program to explicitly close it, we don't close it here because there may be some unsaved work or other close routines to handle
 } ERROR_CODE;
+
+extern const char *convert_error_code_to_string(const ERROR_CODE code)
+
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                              SIZES, CONSTANTS, VARIABLES                                      */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+
+enum sizes{
+    MESSAGE_SIZE_CHARS = 4096,
+    RSA-KEY_SIZE_BYTES = 256, // RSA-2048 BITS 256 bytes
+    UDERNAME_SIZE_CHARS = 64,
+}
+
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                              MESSAGE STRUCT AND METHODS                                       */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+tipedef struct MESSAGE{
+    char sender[USERNAME_SIZE_CHARS];
+    char recipient[USERNAME_SIZE_CHARS];
+    char message[MESSAGE_SIZE_CHARS];
+}MESSAGE;
+
+/*
+ * @note: initialize MESSAGE structure on stack before function call
+ * */
+extern inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* message)
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              LOGIN ENVIRONMENT                                                */
@@ -57,10 +100,17 @@ typedef enum ERROR_CODE
  * 1. The user is registered, so we can check whether the communicated ssh key matches the one in the <user-name>-ssh.pubkey
  * 2. The user is not registered, in that case we can ask if he wants to get registered.
  */
-typedef struct login_session_environment {
-	char user_name[64];
-	char RSA-2048_key[256];
-}
+typedef struct LOGIN_SESSION_ENVIRONMENT {
+	// User currently logged in
+	char sender[USERNAME_SIZE_CHARS];
+	// Other user that the logged user wants to send messages to
+	char receiver[USERNAME_SIZE_CHARS];
+	// Logged in user RSA-Key
+	char sender_RSA_key[RSA-KEY_SIZE_BYTES];
+	// Recipient user RSA-Key
+	char Recipient_RSA_key[RSA-KEY_SIZE_BYTES];
+	
+} LOGIN_SESSION_ENVIRONMENT;
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              HOME FOLDER CREATION                                             */

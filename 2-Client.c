@@ -20,6 +20,9 @@
 #include <string.h> // String concatenation
 #include <unistd.h> // for read
 
+// ierror, an internal debug substitute to errno
+ERROR_CODE ierrno = NO_ERROR;
+
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                            PGP ENCYPTION FUNCTIONS                                            */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
