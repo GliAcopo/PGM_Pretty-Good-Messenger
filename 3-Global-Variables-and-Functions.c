@@ -62,6 +62,10 @@ inline ERROR_CODE verify_message_integrity(MESSAGE* message)
 }
 
 /*
+ * @brief: This fuction takes a message structure pointer and makes it ready to send
+ * 	first it compiles the sender and receiver fields according to the session environment
+ * 	then it asks the user to write the message on terminal
+ * 	then it calls the encrypt function to encrypt the message
  * @note: initialize MESSAGE structure on stack before function call
  * */
 inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* message)
@@ -81,7 +85,32 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
 	printf("receiver: %.64s\n", message->receiver);
 
 	// @todo: WRITE MESSAGE BY GETTING IT FROM TERMINAL
+	do
+	{
+	printf("Now write the message, press ENTER to confirm, \
+			the message can be %u ascii chars long, the remaining chars will be truncated:\n>", MESSAGE_SIZE_CHARS - 1);
+	ssize_t n = read(STDIN_FILENO, message->message, (MESSAGE_SIZE_CHARS - 1));
+	if(unlikely(n < 0))
+	{
+		PSE("");
+		return(SYSCALL_ERROR);
+	}
+	// append string null terminator
+	message->message[n] = '\0';
+
 	// ASK IF THEY WANT TO MODIFY
+	printf("The message was: \n>%s\n\n", message->message);
+	printf("Would you like to confirm? [Y/n]");
+	char confirm = 'Y';
+	if (unlikely(read(STDIN_FILENO, &confirm, 1) < 0))
+	{
+		PSE("");
+		return(SYSCALL_ERROR);
+	}
+
+	} while(confirm == 'n' || confirm == 'N'); // Continue the loop until they do not input 'n'
+
+
 	// ENCRYPT MESSAGE?
 	
 	return(NO_ERROR);
