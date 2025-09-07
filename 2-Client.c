@@ -43,6 +43,18 @@ int main(int argc, char** argv)
     p("Printing ascii art and name");
     fprintf(stdout, "%s", ascii_art);
     fprintf(stdout, "Program name: %s\n", program_name);
+
+    // Check if there is a PGM folder present, if not, create it
+
+    // Check if there is a PGP key, if not, create it
+    // The name of the file will be the username
+    
+    // Ask for the server IP and connect to it
+    
+    // Once connected, download messages
+
+    // Ask the user if he wants to read or send messages
+
     p("Exiting program");
     return(0);
 }

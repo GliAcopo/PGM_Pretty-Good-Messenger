@@ -87,26 +87,26 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
 	// @todo: WRITE MESSAGE BY GETTING IT FROM TERMINAL
 	do
 	{
-	printf("Now write the message, press ENTER to confirm, \
+		printf("Now write the message, press ENTER to confirm, \
 			the message can be %u ascii chars long, the remaining chars will be truncated:\n>", MESSAGE_SIZE_CHARS - 1);
-	ssize_t n = read(STDIN_FILENO, message->message, (MESSAGE_SIZE_CHARS - 1));
-	if(unlikely(n < 0))
-	{
-		PSE("");
-		return(SYSCALL_ERROR);
-	}
-	// append string null terminator
-	message->message[n] = '\0';
+		ssize_t n = read(STDIN_FILENO, message->message, (MESSAGE_SIZE_CHARS - 1));
+		if(unlikely(n < 0))
+		{
+			PSE("");
+			return(SYSCALL_ERROR);
+		}
+		// append string null terminator
+		message->message[n] = '\0';
 
-	// ASK IF THEY WANT TO MODIFY
-	printf("The message was: \n>%s\n\n", message->message);
-	printf("Would you like to confirm? [Y/n]");
-	char confirm = 'Y';
-	if (unlikely(read(STDIN_FILENO, &confirm, 1) < 0))
-	{
-		PSE("");
-		return(SYSCALL_ERROR);
-	}
+		// ASK IF THEY WANT TO MODIFY
+		printf("The message was: \n>%s\n\n", message->message);
+		printf("Would you like to confirm? [Y/n]");
+		char confirm = 'Y';
+		if (unlikely(read(STDIN_FILENO, &confirm, 1) < 0))
+		{
+			PSE("");
+			return(SYSCALL_ERROR);
+		}
 
 	} while(confirm == 'n' || confirm == 'N'); // Continue the loop until they do not input 'n'
 
@@ -236,6 +236,8 @@ success:
 
  */
 // #endregion
+
+ERROR_CODE
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                           PROGRAM NAME AND ASCII ART                                          */
