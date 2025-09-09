@@ -45,7 +45,24 @@ int main(int argc, char** argv)
     fprintf(stdout, "Program name: %s\n", program_name);
 
     // Check if there is a PGM folder present, if not, create it
+	
+    // AUTHENTICATE THE USER 
+    LOGIN_SESSION_ENVIRONMENT env;
+    do{
+    	printf("Input your username:\n>");
+	fflush(stdout);
+    	if(unlikely(fgets(&env.sender, USERNAME_SIZE_CHARS, stdin) == NULL))
+    	{
+		PSE("");
+		exit(EXIT_FAILURE);
+    	}
+	printf("Read name %s\nWould you like to continue the login with this username?\n[Y/n] ");
+	fflush(stdout);
+	char redo = fgetc(&redo, stdin);
+        
+    }while(redo != n || redo != N);	
 
+    // VERIFY THE PRESENCE OF A USER FILE IF NOT CREATE IT
     // Check if there is a PGP key, if not, create it
     // The name of the file will be the username
     

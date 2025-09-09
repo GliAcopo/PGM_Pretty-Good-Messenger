@@ -89,7 +89,8 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
 	{
 		printf("Now write the message, press ENTER to confirm, \
 			the message can be %u ascii chars long, the remaining chars will be truncated:\n>", MESSAGE_SIZE_CHARS - 1);
-		ssize_t n = read(STDIN_FILENO, message->message, (MESSAGE_SIZE_CHARS - 1));
+		do	
+		char ret = fgets(message->message, MESSAGE_SIZE_CHARS, stdin);
 		if(unlikely(n < 0))
 		{
 			PSE("");
@@ -111,7 +112,7 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
 	} while(confirm == 'n' || confirm == 'N'); // Continue the loop until they do not input 'n'
 
 
-	// ENCRYPT MESSAGE?
+	// We DO NOT encrypt message right here, another specialized function will then be called to encrypt the message
 	
 	return(NO_ERROR);
 }
