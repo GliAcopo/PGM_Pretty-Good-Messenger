@@ -58,13 +58,28 @@ int main(int argc, char** argv)
     	}
 	printf("Read name %s\nWould you like to continue the login with this username?\n[Y/n] ");
 	fflush(stdout);
-	char redo = fgetc(&redo, stdin);
-        
-    }while(redo != n || redo != N);	
+	char redo = fgetc(stdin);        
+    }while(redo != n || redo != N);
 
     // VERIFY THE PRESENCE OF A USER FILE IF NOT CREATE IT
     // Check if there is a PGP key, if not, create it
     // The name of the file will be the username
+    do{
+	char* cwd = get_current_dir_name(); // We must free the cwd later
+	P("Verifiyng presence of user [%s] file in current folder [%s]", env.sender, cwd);
+	char buf[strlen(env.seder) + strlen(".pub") + 1];
+	strcpy(buf, env.sender);
+	strcat(buf, ".pub");
+	int fd = open(buf, S_IRUSR);
+	if(unlikely(fd == -1))
+	{
+		PSE("An error occurred while trying to open the [%s] file, \
+				\nnote: if the file simply does not exist then this is normal behaviour", buf);
+	}
+	printf("Seems like the file %s does not exist, creating it now\n", buf);
+	
+	free(cwd); // Free library allocated cwd
+    }while(0);
     
     // Ask for the server IP and connect to it
     
