@@ -51,12 +51,14 @@ int main(int argc, char** argv)
     do{
     	printf("Input your username:\n>");
 	fflush(stdout);
-    	if(unlikely(fgets(&env.sender, USERNAME_SIZE_CHARS, stdin) == NULL))
-    	{
-		PSE("");
-		exit(EXIT_FAILURE);
-    	}
-	printf("Read name %s\nWould you like to continue the login with this username?\n[Y/n] ");
+    	char* ret;
+	do{
+		if(unlikely((ret = fgets(&env.sender, USERNAME_SIZE_CHARS, stdin)) == NULL))
+    		{
+			PSE("Got null string, retry");
+	    	}
+	}while(ret == NULL);
+	printf("Read name %s\nWould you like to continue the login with this username? [Y/n]\n");
 	fflush(stdout);
 	char redo = fgetc(stdin);        
     }while(redo != n || redo != N);
