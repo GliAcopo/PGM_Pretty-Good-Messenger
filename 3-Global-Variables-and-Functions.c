@@ -52,70 +52,13 @@ const char *convert_error_code_to_string(const ERROR_CODE code)
     }
 }
 
+
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
-/*                                              MESSAGE STRUCT CREATION                                          */
+/*                                            PGP ENCYPTION FUNCTIONS                                            */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
-inline ERROR_CODE verify_message_integrity(MESSAGE* message)
-{
-
-}
-
-/*
- * @brief: This fuction takes a message structure pointer and makes it ready to send
- * 	first it compiles the sender and receiver fields according to the session environment
- * 	then it asks the user to write the message on terminal
- * 	then it calls the encrypt function to encrypt the message
- * @note: initialize MESSAGE structure on stack before function call
- * */
-inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* message)
-{
-	// unlikely macro comes from the "Global variables and function.h" file and uses __builtin_expect() gcc compiler macro
-	// Unlikely means that the condition probably evaluates to false
-	if(unlikely(login_env == NULL || message == NULL)){
-		ierrno = NULL_PARAMETERS;
-		PIE("");
-		return(NULL_PARAMETERS);
-	}
-	
-	message->sender = login_env->sender;
-	// Reads 64 bytes or less then stops
-	printf("sender: %.64s\n", message->sender);
-	message->receiver = login_env->receiver;	
-	printf("receiver: %.64s\n", message->receiver);
-
-	// @todo: WRITE MESSAGE BY GETTING IT FROM TERMINAL
-	do
-	{
-		printf("Now write the message, press ENTER to confirm, \
-			the message can be %u ascii chars long, the remaining chars will be truncated:\n>", MESSAGE_SIZE_CHARS - 1);
-		do	
-		char ret = fgets(message->message, MESSAGE_SIZE_CHARS, stdin);
-		if(unlikely(n < 0))
-		{
-			PSE("");
-			return(SYSCALL_ERROR);
-		}
-		// append string null terminator
-		message->message[n] = '\0';
-
-		// ASK IF THEY WANT TO MODIFY
-		printf("The message was: \n>%s\n\n", message->message);
-		printf("Would you like to confirm? [Y/n]");
-		char confirm = 'Y';
-		if (unlikely(read(STDIN_FILENO, &confirm, 1) < 0))
-		{
-			PSE("");
-			return(SYSCALL_ERROR);
-		}
-
-	} while(confirm == 'n' || confirm == 'N'); // Continue the loop until they do not input 'n'
 
 
-	// We DO NOT encrypt message right here, another specialized function will then be called to encrypt the message
-	
-	return(NO_ERROR);
-}
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              HOME FOLDER CREATION                                             */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
@@ -163,7 +106,6 @@ inline ERROR_CODE create_home_folder(void)
     case 'y':
         DEBUG_PRINT("button y pressed");
         break;
-    case 'p':
         DEBUG_PRINT("button p pressed");
     retry: // handling of when the first path name inputted is wrong and we need the user to input a new one
         /* yapping */
@@ -242,6 +184,9 @@ ERROR_CODE
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                           PROGRAM NAME AND ASCII ART                                          */
+
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                           PROGRAM NAME AND ASCII ART                                          */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 const char *program_name = "PGM";
 const char *ascii_art =
@@ -283,9 +228,6 @@ const char *ascii_art =
         /::\    \                /::\    \                /::\____\
        /::::\    \              /::::\    \              /::::|   |
       /::::::\    \            /::::::\    \            /:::::|   |
-     /:::/\:::\    \          /:::/\:::\    \          /::::::|   |
-    /:::/__\:::\    \        /:::/  \:::\    \        /:::/|::|   |
-   /::::\   \:::\    \      /:::/    \:::\    \      /:::/ |::|   |
   /::::::\   \:::\    \    /:::/    / \:::\    \    /:::/  |::|___|______
  /:::/\:::\   \:::\____\  /:::/    /   \:::\ ___\  /:::/   |::::::::\    \
 /:::/  \:::\   \:::|    |/:::/____/  ___\:::|    |/:::/    |:::::::::\____\

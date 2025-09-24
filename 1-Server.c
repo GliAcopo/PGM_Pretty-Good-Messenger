@@ -12,6 +12,9 @@
 #include "3-Global-Variables-and-Functions.h"
 #include "1-Server.h"
 
+// SIMPLE PRINT STATEMENT ON STDOUT
+#define P(fmt, ...) do{fprintf(stdout,"[SR]>>> " fmt "\n", ##__VA_ARGS__);}while(0);
+
 // ierror, an internal debug substitute to errno
 ERROR_CODE ierrno = NO_ERROR;
 
