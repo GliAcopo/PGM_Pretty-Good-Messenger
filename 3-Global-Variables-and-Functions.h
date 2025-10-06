@@ -38,6 +38,7 @@
 
 #define E() do{exit(EXIT_FAILURE);}while(0);
 
+
 /* --- BUILTIN EXPECT CONDITIONAL JUMP COMPILER HELPERS --- */
 // Probably evaluates to true
 #define likely(condition) __builtin_expect(condition, 1)
@@ -82,7 +83,7 @@ enum sizes{
 /*                                              MESSAGE STRUCT AND METHODS                                       */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 typedef struct MESSAGE {
-    char sender[USERNAME_SIZE_CHARS];
+    char* sender[USERNAME_SIZE_CHARS];
     char recipient[USERNAME_SIZE_CHARS];
     char message[MESSAGE_SIZE_CHARS];
 } MESSAGE;
