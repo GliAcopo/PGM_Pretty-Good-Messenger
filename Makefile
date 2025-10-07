@@ -52,7 +52,7 @@
 #   ./bin      – final executables
 
 CC      := gcc
-CFLAGS  := -std=c11 -g -O0 -Wall -Wextra -pedantic \
+CFLAGS  := -std=c11 -g -O0 -Wall -Wextra \ # -pedantic Damn I hate pedantic warnings, I do not care about the old C standard
            -Wshadow -Wconversion -Wdouble-promotion \
            -Wformat=2 -Wstrict-overflow=5 -Wundef \
            -Werror=return-type -Wuninitialized -Wmaybe-uninitialized \
@@ -95,7 +95,7 @@ dirs:
 	@mkdir -p $(OBJ_DIR) $(BIN_DIR)
 
 clean:
-	@$(RM) -r $(OBJ_DIR) $(BIN_DIR)
+    @$(RM) -r $(OBJ_DIR) $(BIN_DIR)
 
 # Automatically pull in dependency files if they exist.
 -include $(SERVER_DEPS) $(CLIENT_DEPS)

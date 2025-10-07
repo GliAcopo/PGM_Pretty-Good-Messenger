@@ -90,8 +90,10 @@ typedef struct MESSAGE {
 
 /*
  * @note: initialize MESSAGE structure on stack before function call
- * */
+*/ // TODO: DELETE SINCE I MOVED IT TO THE 2-CLIENT.C FILE
+/*
 extern inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* message);
+*/
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              LOGIN ENVIRONMENT                                                */

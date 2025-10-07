@@ -1,0 +1,12 @@
+# Object and coverage files
+*.o
+*.gcno
+*.gcda
+*.gcov
+
+# Build directories
+#/build/
+#/Build/
+#/bin/
+#/out/
+#/dist/

@@ -15,6 +15,7 @@
 #include <stdlib.h>     // exit, EXIT_FAILURE, EXIT_SUCCESS
 #include <sys/socket.h> // socket, bind, listen, accept
 #include <netinet/in.h> // struct sockaddr_in, INADDR_ANY
+#include <arpa/inet.h>  // inet_ntoa
 
 // SIMPLE PRINT STATEMENT ON STDOUT
 #define P(fmt, ...) do{fprintf(stdout,"[SRV]>>> " fmt "\n", ##__VA_ARGS__);}while(0);
@@ -33,7 +34,6 @@ int main(int argc, char** argv)
     printf("Welcome to PGM server!\n");
     PIE("Testing PIE macro");
     PSE("Testing PSE macro");
-    DEBUG_PRINT("Testing DEBUG_PRINT macro");
     printf("Printing ascii art and name\n");
     fprintf(stdout, "%s", ascii_art);
     fprintf(stdout, "Program name: %s\n", program_name);
@@ -67,9 +67,22 @@ int main(int argc, char** argv)
         PSE("getsockname returned an error");
         E();
     }
-    P("Server listening on IP: %s, Port: %d", inet_ntoa(address.sin_addr), ntohs(address.sin_port));
-    // inet_ntoa gets the IP address in string format from a struct in_addr (NOT THREAD SAFE, but we are not using threads right now)
+    // NOW WE PRINT THE IP ADDRESS AND PORT NUMBER
+    // NB: inet_ntoa gets the IP address in string format from a struct in_addr (NOT THREAD SAFE, but we are not using threads right now)
+    // But the man page says that the function is obsolete anyway and we should use inet_ntop()
+        // inet_ntop() binary -> text
+        // inet_pton() text -> binary
     // ntohs converts the port number from network byte order (big endian) to host byte order (little endian or whatever)
+    do{ // We use a do while loop to keep the stack clean
+        char temp_addr_str[] = "ddd.ddd.ddd.ddd"; // (String copied from linux man) Max length of an IPv4 address in string format is 15 characters + null terminator
+                                            // If this string is printed we now there was an error somewhere
+        if (unlikely(inet_ntop(AF_INET, &address.sin_addr, temp_addr_str, sizeof(address)) == NULL)) // AF_INET = IPV4 ; "src  points  to  a  struct  in_addr" ;
+        {
+            PSE("inet_ntop returned an error");
+            E();
+        }
+        P("Server listening on IP: %s, Port: %d", temp_addr_str, ntohs(address.sin_port));
+    }while (0);
 
     if (unlikely(listen(skt_fd, MAX_BACKLOG) < 0)) // The second parameter is the backlog, the number of connections that can be waiting while the process is handling a particular connection, 3 is a good value for now
     {
