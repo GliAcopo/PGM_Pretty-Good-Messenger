@@ -67,7 +67,7 @@ typedef enum ERROR_CODE
     EXIT_PROGRAM = -99, // A return value that asks whoever called the program to explicitly close it, we don't close it here because there may be some unsaved work or other close routines to handle
 } ERROR_CODE;
 
-extern const char *convert_error_code_to_string(const ERROR_CODE code){}
+extern const char *convert_error_code_to_string(const ERROR_CODE code);
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              SIZES, CONSTANTS, VARIABLES                                      */
@@ -91,7 +91,7 @@ typedef struct MESSAGE {
 /*
  * @note: initialize MESSAGE structure on stack before function call
  * */
-extern inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* message){}
+extern inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* message);
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              LOGIN ENVIRONMENT                                                */
