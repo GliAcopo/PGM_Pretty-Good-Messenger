@@ -56,10 +56,6 @@ const char *convert_error_code_to_string(const ERROR_CODE code)
 /*                                              MESSAGE STRUCT CREATION                                          */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
-inline ERROR_CODE verify_message_integrity(MESSAGE* message)
-{
-
-}
 
 /*
  * @brief: This fuction takes a message structure pointer and makes it ready to send
@@ -68,6 +64,7 @@ inline ERROR_CODE verify_message_integrity(MESSAGE* message)
  * 	then it calls the encrypt function to encrypt the message
  * @note: initialize MESSAGE structure on stack before function call
  * */
+/*
 inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* message)
 {
 	// unlikely macro comes from the "Global variables and function.h" file and uses __builtin_expect() gcc compiler macro
@@ -94,13 +91,13 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
 		{
     }
 
-    /* Prompt user if he wants to continue or maybe change the home folder */
+    // /* Prompt user if he wants to continue or maybe change the home folder
     printf("Warning! the %s program is going to create a directory in the HOME [%s] user directory \n Full path: [%s]\n \
         press y to continue \n\
         press p to redefine the path to another directory\n\
         press anything else to exit the program without nothing being done\n",
            program_name, HOME_dir, full_path_name);
-    /* Read the response from the user */
+    // Read the response from the user 
     switch (getc(STDIN_FILENO))
     {
     case 'y':
@@ -108,7 +105,7 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
         break;
         DEBUG_PRINT("button p pressed");
     retry: // handling of when the first path name inputted is wrong and we need the user to input a new one
-        /* yapping */
+        ///* yapping 
         printf("Input into terminal a new path name that will substitute the previous:\n\
             %s\n\
             NOTE: only the first %lu characters will be read\n\
@@ -121,10 +118,10 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
         break;                                                      // Other checks are done above
     default:
         return (OPERATION_ABORTED);
-        /** @todo handle this in the main() */
+        ///** @todo handle this in the main() 
     };
 
-    if (mkdir(full_path_name, 0700) == -1) /** @note: I've chosen 0700 because it is what the .ssh folder is using */
+    if (mkdir(full_path_name, 0700) == -1) //** @note: I've chosen 0700 because it is what the .ssh folder is using 
     {
         DEBUG_PRINT("WARNING: mkdir returned an error: [%s]", strerror(errno));
         if (errno == EEXIST)
@@ -145,7 +142,7 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
             printf("Unknown error (%d): %s\n", errno, strerror(errno));
         }
 
-        /* Ask if the user wants to retry inputting the path name */
+        ///* Ask if the user wants to retry inputting the path name 
         printf("Would you like to retry inputting the path name? [Y/n]");
         while (getchar() != '\n' && getchar() != EOF)
         {
@@ -165,7 +162,7 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
 
         DEBUG_PRINT("button p pressed");
     retry: // handling of when the first path name inputted is wrong and we need the user to input a new one
-        /* yapping */
+        //* yapping 
         printf("Input into terminal a new path name that will substitute the previous:\n\
             %s\n\
             NOTE: only the first %lu characters will be read\n\
@@ -178,10 +175,10 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
         break;                                                      // Other checks are done above
     default:
         return (OPERATION_ABORTED);
-        /** @todo handle this in the main() */
+        //** @todo handle this in the main() 
     };
 
-    if (mkdir(full_path_name, 0700) == -1) /** @note: I've chosen 0700 because it is what the .ssh folder is using */
+    if (mkdir(full_path_name, 0700) == -1) //** @note: I've chosen 0700 because it is what the .ssh folder is using 
     {
         DEBUG_PRINT("WARNING: mkdir returned an error: [%s]", strerror(errno));
         if (errno == EEXIST)
@@ -202,7 +199,7 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
             printf("Unknown error (%d): %s\n", errno, strerror(errno));
         }
 
-        /* Ask if the user wants to retry inputting the path name */
+        //* Ask if the user wants to retry inputting the path name 
         printf("Would you like to retry inputting the path name? [Y/n]");
         while (getchar() != '\n' && getchar() != EOF)
         {
@@ -223,6 +220,7 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
 success:
     return (NO_ERROR);
 }
+*/
 /** mkdir modes:
  * | Mode   | Octal     | Meaning                                     |
 | ------ | --------- | ------------------------------------------- |
@@ -233,58 +231,49 @@ success:
 | `0777` | rwxrwxrwx | Everyone can read, write, execute (!!!)      |
 | `0644` | rw-r--r-- | Usually for files: Owner write, others read |
 | `0555` | r-xr-xr-x | Read/execute for everyone (no write)        |
-
- */
-// #endregion
-
-ERROR_CODE
-
-/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
-/*                                           PROGRAM NAME AND ASCII ART                                          */
-                                 \::/____/                \::/    /
-                                                           \/____/
-
-  _____          _   _            _____                 _   __  __
- |  __ \        | | | |          / ____|               | | |  \/  |
- | |__) | __ ___| |_| |_ _   _  | |  __  ___   ___   __| | | \  / | ___  ___ ___  ___ _ __   __ _  ___ _ __
- |  ___/ '__/ _ \ __| __| | | | | | |_ |/ _ \ / _ \ / _` | | |\/| |/ _ \/ __/ __|/ _ \ '_ \ / _` |/ _ \ '__|
- | |   | | |  __/ |_| |_| |_| | | |__| | (_) | (_) | (_| | | |  | |  __/\__ \__ \  __/ | | | (_| |  __/ |
- |_|   |_|  \___|\__|\__|\__, |  \_____|\___/ \___/ \__,_| |_|  |_|\___||___/___/\___|_| |_|\__, |\___|_|
-                          __/ |                                                              __/ |
-                         |___/                                                              |___/
-A super simple terminal messenger app written in C that uses PGP (Pretty Good Privacy) encryption
 */
+
+
+const char *program_name = "PGM";
+const char *ascii_art =
+    "          _____                    _____                    _____          \n"
+    "         /\\    \\                  /\\    \\                  /\\    \\         \n"
+    "        /::\\    \\                /::\\    \\                /::\\____\\        \n"
+    "       /::::\\    \\              /::::\\    \\              /::::|   |        \n"
+    "      /::::::\\    \\            /::::::\\    \\            /:::::|   |        \n"
+    "     /:::/\\:::\\    \\          /:::/\\:::\\    \\          /::::::|   |        \n"
+    "    /:::/__\\:::\\    \\        /:::/  \\:::\\    \\        /:::/|::|   |        \n"
+    "   /::::\\   \\:::\\    \\      /:::/    \\:::\\    \\      /:::/ |::|   |        \n"
+    "  /::::::\\   \\:::\\    \\    /:::/    / \\:::\\    \\    /:::/  |::|___|______  \n"
+    " /:::/\\:::\\   \\:::\\____\\  /:::/    /   \\:::\\ ___\\  /:::/   |::::::::\\    \\ \n"
+    "/:::/  \\:::\\   \\:::|    |/:::/____/  ___\\:::|    |/:::/    |:::::::::\\____\\\n"
+    "\\::/    \\:::\\  /:::|____|\\:::\\    \\ /\\  /:::|____|\\::/    / ~~~~~/:::/    /\n"
+    " \\/_____/\\:::\\/:::/    /  \\:::\\    /::\\ \\::/    /  \\/____/      /:::/    / \n"
+    "          \\::::::/    /    \\:::\\   \\:::\\ \\/____/               /:::/    /  \n"
+    "           \\::::/    /      \\:::\\   \\:::\\____\\                /:::/    /   \n"
+    "            \\::/____/        \\:::\\  /:::/    /               /:::/    /    \n"
+    "             ~~               \\:::\\/:::/    /               /:::/    /     \n"
+    "                               \\::::::/    /               /:::/    /      \n"
+    "                                \\::::/    /               /:::/    /       \n"
+    "                                 \\::/____/                \\::/    /        \n"
+    "                                                           \\/____/         \n"
+    "\n"
+    "  _____          _   _            _____                 _   __  __                                          \n"
+    " |  __ \\        | | | |          / ____|               | | |  \\/  |                                         \n"
+    " | |__) | __ ___| |_| |_ _   _  | |  __  ___   ___   __| | | \\  / | ___  ___ ___  ___ _ __   __ _  ___ _ __ \n"
+    " |  ___/ '__/ _ \\ __| __| | | | | | |_ |/ _ \\ / _ \\ / _` | | |\\/| |/ _ \\/ __/ __|/ _ \\ '_ \\ / _` |/ _ \\ '__|\n"
+    " | |   | | |  __/ |_| |_| |_| | | |__| | (_) | (_) | (_| | | |  | |  __/\\__ \\__ \\  __/ | | | (_| |  __/ |   \n"
+    " |_|   |_|  \\___|\\__|\\__|\\__, |  \\_____|\\___/ \\___/ \\__,_| |_|  |_|\\___||___/___/\\___|_| |_|\\__, |\\___|_|   \n"
+    "                          __/ |                                                              __/ |          \n"
+    "                         |___/                                                              |___/           \n"
+    "A super simple terminal messenger app written in C that uses PGP (Pretty Good Privacy) encryption\n";
+
 /**
- * @file 3-Global-Variables-and-Functions.c
- * @author Jacopo Rizzuto (jacoporizzuto04@gmail.com)
- * @brief .c File in wich variables, constants, parameters and functions are used both by client code and Server code.
- * @version 0.1
- * @date 2025-07-17
- *
- * @copyright Copyright (c) 2025
- *
- */
-
-#include "3-Global-Variables-and-Functions.h" 
-#include <unistd.h>
-
-// ierror, an internal debug substitute to errno
-ERROR_CODE ierrno = NO_ERROR;
-
-/**
- * @brief Converts an ERROR_CODE enum value to its corresponding string representation.
- *
- * This function takes an ERROR_CODE value and returns a constant string describing the error.
- *
- * @param code The ERROR_CODE value to convert.
- * @return A constant string representing the error code. If the code is not recognized, "UNKNOWN_ERROR_CODE" is returned.
- * 
- * @note: since the 
- */
-const char *convert_error_code_to_string(const ERROR_CODE code)
-{
-    switch (code)
-    {
+          _____                    _____                    _____
+         /\    \                  /\    \                  /\    \
+        /::\    \                /::\    \                /::\____\
+       /::::\    \              /::::\    \              /::::|   |
+      /::::::\    \            /::::::\    \            /:::::|   |
   /::::::\   \:::\    \    /:::/    / \:::\    \    /:::/  |::|___|______
  /:::/\:::\   \:::\____\  /:::/    /   \:::\ ___\  /:::/   |::::::::\    \
 /:::/  \:::\   \:::|    |/:::/____/  ___\:::|    |/:::/    |:::::::::\____\
