@@ -52,7 +52,7 @@
 #   ./bin      – final executables
 # -pedantic Damn I hate pedantic warnings, I do not care about the compiler criyng about the old C standard
 CC      := gcc
-CFLAGS  := -std=c11 -g -O0 -Wall -Wextra \
+CFLAGS  := -std=c11 -g -O2 -Wall -Wextra \
            -Wshadow -Wconversion -Wdouble-promotion \
            -Wformat=2 -Wstrict-overflow=5 -Wundef \
            -Werror=return-type -Wuninitialized -Wmaybe-uninitialized \
