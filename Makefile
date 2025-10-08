@@ -50,9 +50,9 @@
 # Directory layout (auto‑created if missing):
 #   ./build    – object (.o) and dependency (.d) files
 #   ./bin      – final executables
-
+# -pedantic Damn I hate pedantic warnings, I do not care about the compiler criyng about the old C standard
 CC      := gcc
-CFLAGS  := -std=c11 -g -O0 -Wall -Wextra \ # -pedantic Damn I hate pedantic warnings, I do not care about the old C standard
+CFLAGS  := -std=c11 -g -O0 -Wall -Wextra \
            -Wshadow -Wconversion -Wdouble-promotion \
            -Wformat=2 -Wstrict-overflow=5 -Wundef \
            -Werror=return-type -Wuninitialized -Wmaybe-uninitialized \
@@ -95,7 +95,7 @@ dirs:
 	@mkdir -p $(OBJ_DIR) $(BIN_DIR)
 
 clean:
-    @$(RM) -r $(OBJ_DIR) $(BIN_DIR)
+	@$(RM) -r $(OBJ_DIR) $(BIN_DIR)
 
 # Automatically pull in dependency files if they exist.
 -include $(SERVER_DEPS) $(CLIENT_DEPS)
