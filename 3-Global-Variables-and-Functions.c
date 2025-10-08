@@ -13,7 +13,7 @@
 #include <unistd.h>
 
 // ierror, an internal debug substitute to errno
-ERROR_CODE ierrno = NO_ERROR;
+//ERROR_CODE ierrno = NO_ERROR;
 
 /**
  * @brief Converts an ERROR_CODE enum value to its corresponding string representation.
