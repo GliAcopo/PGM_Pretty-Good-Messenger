@@ -158,7 +158,7 @@ int main(int argc, char** argv)
     }while (0);
 
     P("Now discovering machine IP addresses...");
-    while(print_local_ip_addresses(port) != NO_ERROR)
+    while(unlikely(print_local_ip_addresses(port) != NO_ERROR))
     {
         PSE("print_local_ip_addresses() returned an error, press any key to retry...");
         getchar();
