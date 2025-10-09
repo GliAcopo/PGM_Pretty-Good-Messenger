@@ -266,7 +266,9 @@ const char *ascii_art =
     " |_|   |_|  \\___|\\__|\\__|\\__, |  \\_____|\\___/ \\___/ \\__,_| |_|  |_|\\___||___/___/\\___|_| |_|\\__, |\\___|_|   \n"
     "                          __/ |                                                              __/ |          \n"
     "                         |___/                                                              |___/           \n"
-    "A super simple terminal messenger app written in C that uses PGP (Pretty Good Privacy) encryption\n";
+    "A super simple terminal messenger app written in C \n";
+
+// that uses PGP (Pretty Good Privacy) encryption
 
 /**
           _____                    _____                    _____

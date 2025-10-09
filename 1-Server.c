@@ -50,6 +50,16 @@ ERROR_CODE print_local_ip_addresses(uint16_t port)
         return SYSCALL_ERROR;
     }
 
+    // Loopback address code
+    uint32_t loopback = 0; // IPv4 is 32 bits according to linux man inet_pton(3), so there should be no problem storing it in a uint32_t... Right?
+    if(unlikely(inet_pton(AF_INET, "127.0.0.1", &loopback) <= 0)) // Converts the string to binary format, using this to compare the addresses we find with the loopback address @note: pton can also return 0 if the address is invalid, but we know it's valid since it's hardcoded
+    {
+        PSE("inet_pton() error");
+        freeifaddrs(ifaddr); // Edge case in wich we free (forgot it once...)
+        return SYSCALL_ERROR;
+    }
+
+
     P("Local IP addresses found:");
     // Walk through linked list, maintaining head pointer so we can free list later
     for (struct ifaddrs *ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
@@ -71,7 +81,11 @@ ERROR_CODE print_local_ip_addresses(uint16_t port)
                 freeifaddrs(ifaddr); // Edge case in wich we free (forgot it twice...)
                 return SYSCALL_ERROR;
             }
-            P("\tInterface: %s\tAddress: %s:%u", ifa->ifa_name, host, port);
+            else if (host == loopback)
+            {
+                continue; // We skip the loop if the address is loopback
+            }
+            P("\tInterface: %s\tAddress: %s:%u", ifa->ifa_name, host, port); // \t stands for tab (ordering text )
         }
     }
 
@@ -141,7 +155,11 @@ int main(int argc, char** argv)
     }while (0);
 
     P("Now discovering machine IP addresses...");
-    print_local_ip_addresses(port);
+    while(print_local_ip_addresses(port) != NO_ERROR)
+    {
+        PSE("print_local_ip_addresses() returned an error, press any key to retry...");
+        getchar();
+    }
     P("You can copypaste any of these IP addresses on the client machine to connect to the server");
 
     if (unlikely(listen(skt_fd, MAX_BACKLOG) < 0)) // The second parameter is the backlog, the number of connections that can be waiting while the process is handling a particular connection, 3 is a good value for now
