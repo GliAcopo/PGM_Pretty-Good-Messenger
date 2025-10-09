@@ -39,7 +39,7 @@ I've tried to optimize the code to the best of my abilities and knowledge, while
 ### Conditional Jumps optimizations
 `__builtin_expect(condition, expected_outcome)` is a compiler extension available in GCC that hints the compiler what is the expected outcome of the condition evaluation.
 By doing this the compiler will optimize the code accordingly for conditional jumps.
-It’s particularly useful for the sanity checks and error checks scattered throughout my code, where errors are very unlikely but must still be tested for—without wasting unnecessary processor cycles.
+It’s particularly useful for the sanity checks and error checks scattered throughout my code, where errors are very unlikely but must still be tested for, without wasting unnecessary processor cycles.
 
 I have made two macros in order to make the code easier to read, they can be found in the `3-Global-Variables-and-Functions.h` file.
 ```c
@@ -50,6 +50,7 @@ I have made two macros in order to make the code easier to read, they can be fou
 #define unlikely(condition) __builtin_expect(condition, 0)
 ```
 
+TODO: delete this security part
 
 ## Security and Encryption
 

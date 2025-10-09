@@ -50,15 +50,16 @@ ERROR_CODE print_local_ip_addresses(uint16_t port)
         return SYSCALL_ERROR;
     }
 
-    // Loopback address code
-    uint32_t loopback = 0; // IPv4 is 32 bits according to linux man inet_pton(3), so there should be no problem storing it in a uint32_t... Right?
-    if(unlikely(inet_pton(AF_INET, "127.0.0.1", &loopback) <= 0)) // Converts the string to binary format, using this to compare the addresses we find with the loopback address @note: pton can also return 0 if the address is invalid, but we know it's valid since it's hardcoded
-    {
-        PSE("inet_pton() error");
-        freeifaddrs(ifaddr); // Edge case in wich we free (forgot it once...)
-        return SYSCALL_ERROR;
-    }
-
+    // I just spent like 30 minutes trying to figure out why the loopback address was not being filtered out turns out I was comparing a char array with a uint32_t aaaaaaaaaaaaaaaaaaaaaaaaa
+    //    // Loopback address code
+    //    uint32_t loopback = 0; // IPv4 is 32 bits according to linux man inet_pton(3), so there should be no problem storing it in a uint32_t... Right?
+    //    if(unlikely(inet_pton(AF_INET, "127.0.0.1", &loopback) <= 0)) // Converts the string to binary format, using this to compare the addresses we find with the loopback address @note: pton can also return 0 if the address is invalid, but we know it's valid since it's hardcoded
+    //    {
+    //        PSE("inet_pton() error");
+    //        freeifaddrs(ifaddr); // Edge case in wich we free (forgot it once...)
+    //        return SYSCALL_ERROR;
+    //    }
+    
 
     P("Local IP addresses found:");
     // Walk through linked list, maintaining head pointer so we can free list later
@@ -75,17 +76,19 @@ ERROR_CODE print_local_ip_addresses(uint16_t port)
         {
             char host[NI_MAXHOST];
             int s = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in), host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
-            if (s != 0)
+            if (unlikely(s != 0))
             {
                 PSE("getnameinfo() failed: %s", gai_strerror(s)); // gai_strerror (copypasted from man page) converts the error code returned by getnameinfo to a human readable string
                 freeifaddrs(ifaddr); // Edge case in wich we free (forgot it twice...)
                 return SYSCALL_ERROR;
             }
-            else if (host == loopback)
+            else if (!strcmp(host, "127.0.0.1")) // We skip the loop if the address is loopback
             {
-                continue; // We skip the loop if the address is loopback
+                continue; 
+            } else  // else not strictly needed but whatever
+            {
+                P("\tInterface: %s\tAddress: %s:%u", ifa->ifa_name, host, port); // \t stands for tab (ordering text )
             }
-            P("\tInterface: %s\tAddress: %s:%u", ifa->ifa_name, host, port); // \t stands for tab (ordering text )
         }
     }
 
