@@ -67,3 +67,15 @@ For cryptographic operations, the app uses **RSA-2048 keys** generated via the `
 
 ### Authentication
 By taking advantage of the The authentication method is very simple, 
+
+# App details
+
+## Passing the parameters to the threads
+I have decided to use... TODO
+```c
+// Now we accept connections in loop, each connection will be handled by a different thread
+    int thread_args_connections[MAX_BACKLOG]; // A circular array containing the fds of the connections to pass to the thread
+    uint8_t thread_args_connections_index = 0;// The index of the array to keep track where to write
+                                              // But won't the elements of the array be overwritten by the next connections?
+                                              // No, since the size of the array is the size of the max backlog, so if an element is being overwritten then the thread assigned to that connetion had already closed said connection
+```

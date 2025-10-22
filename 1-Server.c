@@ -96,6 +96,27 @@ ERROR_CODE print_local_ip_addresses(uint16_t port)
     return NO_ERROR;
 }
 
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                          COONNECTION HANDLER (THREAD)                                         */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+
+void *thread_routine(void *arg)
+{
+    int connection_fd = *((int *)arg);
+    P("[%d]::: Thread started for connection fd: %d", connection_fd, connection_fd);
+
+    // Here we will handle the connection
+    // For now we just close the connection
+    P("Closing connection fd: %d", connection_fd);
+    if(unlikely(close(connection_fd) < 0))
+    {
+        PSE("Error closing connection fd: %d", connection_fd);
+        E();
+    }
+    P("[%d]:::Connection fd: %d closed, thread exiting", connection_fd, connection_fd);
+    pthread_exit(NULL);
+}
+
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                                   MAIN LOOP                                                   */
@@ -173,7 +194,13 @@ int main(int argc, char** argv)
     P("Socket listening successfully! Max backlog: %d", MAX_BACKLOG);
 
     // Now we accept connections in loop, each connection will be handled by a different thread
-    while(1)
+    int thread_args_connections[MAX_BACKLOG]; // A circular array containing the fds of the connections to pass to the thread
+    uint8_t thread_args_connections_index = 0;// The index of the array to keep track where to write
+                                              // But won't the elements of the array be overwritten by the next connections?
+                                              // No, since the size of the array is the size of the max backlog, so if an element is being overwritten then the thread assigned to that connetion had already closed said connection
+    pthread_t thread_id_array[MAX_BACKLOG];   // The thread id array in which we store the thread ids
+                                              // @note: we are not joining the threads anywhere, so this is not exactly useful, but whatever
+    while (1)
     {
         P("Waiting for incoming connections...");
         // We necessarily need to create this variables on stack since the accept function uses pointers to them
@@ -187,7 +214,18 @@ int main(int argc, char** argv)
         }
         P("Connection accepted from IP: %s, Port: %d, New socket file descriptor: %d", inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port), new_connection);
         // CREATE NEW THREAD HANDLING THE CONNECTION:
-        // TODO
+        thread_args_connections[thread_args_connections_index] = new_connection; // We store the new connection fd in the circular array
+        if (unlikely(pthread_create(&thread_id_array[thread_args_connections_index], NULL, thread_routine, (void *)&thread_args_connections[thread_args_connections_index]) < 0))
+        {
+            PSE("Failed to create thread for connection fd: %d", new_connection);
+            // We close the connection since we cannot handle it
+            close(new_connection);
+        }
+        else{
+            // Successfully created thread, increment the index in a circular manner
+            thread_args_connections_index = (thread_args_connections_index + 1) % MAX_BACKLOG;
+            P("Thread [%u] created successfully for connection fd: %d\n", thread_id_array[thread_args_connections_index], new_connection);
+        }
         // close(new_connection); It's the thread's resposibility to close the socket when done
     }
 
