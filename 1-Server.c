@@ -105,9 +105,23 @@ void *thread_routine(void *arg)
     int connection_fd = *((int *)arg);
     P("[%d]::: Thread started for connection fd: %d", connection_fd, connection_fd);
 
-    // Here we will handle the connection
-    // For now we just close the connection
-    P("Closing connection fd: %d", connection_fd);
+    // Handle the connection
+
+    // Login
+    P("[%d]::: Handling login...", connection_fd);
+    do{
+        char login_buffer[LOGIN_BUFFER_SIZE] = {0}; // Buffer to store the login data
+        if(unlikely(recv(connection_fd, NULL, 0, 0) <= 0)) // Placeholder for actual login handling
+        {
+            PSE("Error during login handling for connection fd: %d", connection_fd);
+            E();
+        }
+    }while(CONDITION_FALSE); // Placeholder loop condition
+
+    P("[%d]::: Login handled successfully", connection_fd);
+
+    // Closing the connection before exiting the thread
+    P("[%d]::: Closing connection fd: %d", connection_fd, connection_fd);
     if(unlikely(close(connection_fd) < 0))
     {
         PSE("Error closing connection fd: %d", connection_fd);
