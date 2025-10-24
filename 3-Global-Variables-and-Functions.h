@@ -75,15 +75,16 @@ extern const char *convert_error_code_to_string(const ERROR_CODE code);
 
 enum sizes{
     MESSAGE_SIZE_CHARS = 4096, // 4096
-    RSA_KEY_SIZE_BYTES = 256, // RSA-2048 BITS 256 bytes
+    // RSA_KEY_SIZE_BYTES = 256, // RSA-2048 BITS 256 bytes
     USERNAME_SIZE_CHARS = 64,
+    PASSWORD_SIZE_CHARS = 256,
 };
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              MESSAGE STRUCT AND METHODS                                       */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 typedef struct MESSAGE {
-    char* sender[USERNAME_SIZE_CHARS];
+    char sender[USERNAME_SIZE_CHARS];
     char recipient[USERNAME_SIZE_CHARS];
     char message[MESSAGE_SIZE_CHARS];
 } MESSAGE;
@@ -103,6 +104,7 @@ extern inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, ME
  * 1. The user is registered, so we can check whether the communicated ssh key matches the one in the <user-name>-ssh.pubkey
  * 2. The user is not registered, in that case we can ask if he wants to get registered.
  */
+/** @deprecated
 typedef struct LOGIN_SESSION_ENVIRONMENT {
 	// User currently logged in
 	char sender[USERNAME_SIZE_CHARS];
@@ -114,6 +116,15 @@ typedef struct LOGIN_SESSION_ENVIRONMENT {
 	char Recipient_RSA_key[RSA_KEY_SIZE_BYTES];
 	
 } LOGIN_SESSION_ENVIRONMENT;
+*/
+
+typedef struct {
+    // User currently logged in
+    char sender[USERNAME_SIZE_CHARS];
+    // Other user that the logged user wants to send messages to
+    char receiver[USERNAME_SIZE_CHARS];
+} LOGIN_SESSION_ENVIRONMENT;
+
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              HOME FOLDER CREATION                                             */

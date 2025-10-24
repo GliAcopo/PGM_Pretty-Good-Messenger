@@ -19,7 +19,12 @@
 #include <stdlib.h> // to get the home environment name
 #include <string.h> // String concatenation
 #include <unistd.h> // for read
-
+#include <sys/socket.h> // socket, bind, listen, accept
+#include <netinet/in.h> // struct sockaddr_in, INADDR_ANY
+#include <arpa/inet.h>	// inet_ntoa
+#include <ifaddrs.h>	// struct ifaddrs, getifaddrs, freeifaddrs
+#include <netdb.h>		// NI_MAXHOST, getnameinfo
+#include <linux/if_link.h> // IFLA_ADDRESS
 
 // SIMPLE PRINT STATEMENT ON STDOUT
 #define P(fmt, ...) do{fprintf(stdout,"[CL]>>> " fmt "\n", ##__VA_ARGS__);}while(0);
@@ -38,6 +43,7 @@ ERROR_CODE ierrno = NO_ERROR;
  * 	then it calls the encrypt function to encrypt the message
  * @note: initialize MESSAGE structure on stack before function call
  * */
+/** @deprecated 
 inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* message)
 {
 	// unlikely macro comes from the "Global variables and function.h" file and uses __builtin_expect() gcc compiler macro
@@ -84,7 +90,7 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
 
 	return(NO_ERROR);
 }
-
+*/
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                                   MAIN LOOP                                                   */
@@ -125,10 +131,90 @@ int main(int argc, char** argv)
 		redo = fgetc(stdin);
 	} while (redo != 'n' || redo != 'N');
 
+	// open IPv4 socket, ask server IP, send username and wait for a response 
+
+	{
+		int sockfd = -1;
+		struct sockaddr_in srv = {0};
+		char server_ip[INET_ADDRSTRLEN];
+
+		P("Enter server IPv4 address (e.g. 192.168.1.10):");
+		fflush(stdout);
+		if (fgets(server_ip, sizeof(server_ip), stdin) == NULL) {
+			PSE("Failed to read server IP");
+			return(1);
+		}
+		/* strip newline */
+		server_ip[strcspn(server_ip, "\r\n")] = '\0';
+
+		const uint16_t SERVER_PORT = 12345; /* change if needed */
+
+		sockfd = socket(AF_INET, SOCK_STREAM, 0);
+		if (sockfd < 0) {
+			PSE("socket()");
+			return(1);
+		}
+
+		srv.sin_family = AF_INET;
+		srv.sin_port = htons(SERVER_PORT);
+		if (inet_pton(AF_INET, server_ip, &srv.sin_addr) <= 0) {
+			PSE("Invalid IPv4 address");
+			close(sockfd);
+			return(1);
+		}
+
+		P("Connecting to %s:%u ...", server_ip, SERVER_PORT);
+		if (connect(sockfd, (struct sockaddr *)&srv, sizeof(srv)) < 0) {
+			PSE("connect()");
+			close(sockfd);
+			return(1);
+		}
+
+		/* prepare username (strip possible newline) and send */
+		char username[USERNAME_SIZE_CHARS];
+		strncpy(username, env.sender, sizeof(username));
+		username[sizeof(username)-1] = '\0';
+		username[strcspn(username, "\r\n")] = '\0';
+
+		ssize_t sent = send(sockfd, username, strlen(username) + 1, 0); /* include nul for convenience */
+		if (sent < 0) {
+			PSE("send()");
+			close(sockfd);
+			return(1);
+		}
+
+		/* wait for a single response from server */
+		char resp[512];
+		ssize_t recvd = recv(sockfd, resp, sizeof(resp) - 1, 0);
+		if (recvd < 0) {
+			PSE("recv()");
+			close(sockfd);
+			return(1);
+		}
+		resp[recvd] = '\0';
+		P("Server response: %s", resp);
+
+		/* close socket (or keep it open for further communication) */
+		close(sockfd);
+	}
+
 	// ----------------------------------------------------------------------------------------------------------------------------------------
-    // VERIFY THE PRESENCE OF A USER FILE IF NOT CREATE IT
-    // Check if there is a PGP key, if not, create it
-    // The name of the file will be the username
+    
+    
+    // Ask for the server IP and connect to it
+    
+    // Once connected, download messages
+
+    // Ask the user if he wants to read or send messages
+
+    p("Exiting program");
+    return(0);
+}
+
+/** @deprecated
+ * // VERIFY THE PRESENCE OF A USER FILE IF NOT CREATE IT
+	// Check if there is a PGP key, if not, create it
+	// The name of the file will be the username
 
 	FILE *usrfd = NULL; // Initializing file descriptor used to access the two main files
 	FILE *keyfd = NULL;
@@ -209,20 +295,11 @@ int main(int argc, char** argv)
 		free(cwd); // Free library allocated cwd
 	} while (0);
 	// ----------------------------------------------------------------------------------------------------------------------------------------
-    
-    MESSAGE message1;
-    create_message(&env, &message1);
-    P("%s", message1.sender);
-    P("%s", message1.message);
 
-    // TODO get the file pubkey
-    
-    // Ask for the server IP and connect to it
-    
-    // Once connected, download messages
+	MESSAGE message1;
+	create_message(&env, &message1);
+	P("%s", message1.sender);
+	P("%s", message1.message);
 
-    // Ask the user if he wants to read or send messages
-
-    p("Exiting program");
-    return(0);
-}
+	// TODO get the file pubkey
+ */

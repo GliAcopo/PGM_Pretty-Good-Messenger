@@ -106,16 +106,21 @@ void *thread_routine(void *arg)
     P("[%d]::: Thread started for connection fd: %d", connection_fd, connection_fd);
 
     // Handle the connection
-
+    LOGIN_SESSION_ENVIRONMENT login_env = {0};
     // Login
     P("[%d]::: Handling login...", connection_fd);
     do{
-        char login_buffer[LOGIN_BUFFER_SIZE] = {0}; // Buffer to store the login data
-        if(unlikely(recv(connection_fd, NULL, 0, 0) <= 0)) // Placeholder for actual login handling
+        ; // Buffer to store the login data username + password + separator
+        if (unlikely(recv(connection_fd, &login_env.sender, sizeof(login_env.sender), 0) <= 0)) // Placeholder for actual login handling
         {
             PSE("Error during login handling for connection fd: %d", connection_fd);
             E();
         }
+        // search for the registered user:
+        P("[%d]::: Read name [%s]", connection_fd, login_env.sender);
+
+        // search the user files
+
     }while(CONDITION_FALSE); // Placeholder loop condition
 
     P("[%d]::: Login handled successfully", connection_fd);
