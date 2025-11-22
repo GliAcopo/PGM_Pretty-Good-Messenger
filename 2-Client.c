@@ -137,7 +137,7 @@ int main(int argc, char** argv)
 
 			env.sender[strcspn(env.sender, "\r\n")] = '\0'; // remove newline for network send
 
-			P(">>> Read name: %s\nWould you like to continue the login with this username? [Y/n]\n", env.sender);
+			P(">>> Read name: %s\nWould you like to continue the login with this username? [Y/n]", env.sender);
 			fflush(stdout);
 
 			redo = (unsigned char)(fgetc(stdin));
