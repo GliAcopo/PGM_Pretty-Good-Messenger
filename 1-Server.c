@@ -15,7 +15,7 @@
 #include "1-Server.h"
 #include <stdio.h>      // printf, fprintf
 #include <stdlib.h>     // exit, EXIT_FAILURE, EXIT_SUCCESS
-// #include <unistd.h>     // close
+#include <unistd.h>     // close, access
 #include <sys/socket.h> // socket, bind, listen, accept
 #include <netinet/in.h> // struct sockaddr_in, INADDR_ANY
 #include <arpa/inet.h>  // inet_ntoa
@@ -105,26 +105,146 @@ void *thread_routine(void *arg)
     int connection_fd = *((int *)arg);
     P("[%d]::: Thread started for connection fd: %d", connection_fd, connection_fd);
 
+    // const int MAX_PASSWORD_ATTEMPTS = 3; // Of course, if the user fails more than this number of times, we close the connection
+    // This is now defined in 3-Global-Variables-and-Functions.h
+
     // Handle the connection
-    LOGIN_SESSION_ENVIRONMENT login_env = {0};
-    // Login
+    LOGIN_SESSION_ENVIRONMENT login_env = {0};      // @note: initialized to zero, not really needed but I do it for best practice
+    ERROR_CODE response_code = NO_ERROR;
+    char stored_password[PASSWORD_SIZE_CHARS] = {0};
+    char client_password[PASSWORD_SIZE_CHARS] = {0};
+
+    // Login / registration handshake
     P("[%d]::: Handling login...", connection_fd);
-    do{
-        ; // Buffer to store the login data username + password + separator
-        if (unlikely(recv(connection_fd, &login_env.sender, sizeof(login_env.sender), 0) <= 0)) // Placeholder for actual login handling
+
+    //  1) Receive username 
+    ssize_t received = recv(connection_fd, &login_env.sender, sizeof(login_env.sender), 0);
+    if (unlikely(received <= 0))
+    {
+        PSE("::: Error receiving username for connection fd: %d", connection_fd);
+        goto cleanup;
+    }
+    login_env.sender[USERNAME_SIZE_CHARS - 1] = '\0';                     // Defensive null-termination
+    login_env.sender[strcspn(login_env.sender, "\r\n")] = '\0';           // Strip newline if present @note: \r is for Windows compatibility. I do not remember if the professor told us only for UNIX systems or not
+    P("[%d]::: Read username [%s]", connection_fd, login_env.sender);
+
+    //  2) Decide whether to register or authenticate
+    char user_file_path[USERNAME_SIZE_CHARS + 4] = {0}; // room for simple suffix if i want, like ".txt"
+    if (unlikely(snprintf(user_file_path, sizeof(user_file_path), "%s", login_env.sender) < 0))
+    {
+        PSE("::: Failed to build user file path for username: %s", login_env.sender);
+        goto cleanup;
+    }
+
+    FILE *user_file = fopen(user_file_path, "r");
+    // Now we start this massive if-else block, depending on whether the user file is found or not we REGISTER or AUTHENTICATE
+    if (user_file == NULL)  // If user file is not found, then start registration
+    {
+        // User not found -> ask client to register (using code START_REGISTRATION)
+        response_code = START_REGISTRATION;
+        if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
         {
-            PSE("Error during login handling for connection fd: %d", connection_fd);
-            E();
+            PSE("::: Failed to send START_REGISTRATION to client on fd: %d", connection_fd);
+            goto cleanup;
         }
-        // search for the registered user:
-        P("[%d]::: Read name [%s]", connection_fd, login_env.sender);
+        P("[%d]::: Sent START_REGISTRATION to [%s]", connection_fd, login_env.sender);
 
-        // search the user files
+        // Receive password chosen by the client
+        received = recv(connection_fd, client_password, sizeof(client_password), 0);
+        if (unlikely(received <= 0))
+        {
+            PSE("::: Failed to receive registration password for [%s]", login_env.sender);
+            goto cleanup;
+        }
+        client_password[PASSWORD_SIZE_CHARS - 1] = '\0';           // Add null-termination just in case
+        client_password[strcspn(client_password, "\r\n")] = '\0';  // Strip newline if present, also \r for Windows compatibility... yada yada 
 
-    }while(CONDITION_FALSE); // Placeholder loop condition
+        // Create user file and store password as the first line
+        user_file = fopen(user_file_path, "w");
+        if (unlikely(user_file == NULL))
+        {
+            PSE("::: Failed to create user file for [%s]", login_env.sender);
+            goto cleanup;
+        }
+        if (unlikely(fprintf(user_file, "%s\n", client_password) < 0))
+        {
+            PSE("::: Failed to write password for new user [%s]", login_env.sender);
+            fclose(user_file);
+            goto cleanup;
+        }
+        fclose(user_file);
 
-    P("[%d]::: Login handled successfully", connection_fd);
+        response_code = NO_ERROR;
+        if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+        {
+            PSE("::: Failed to confirm registration for [%s]", login_env.sender);
+            goto cleanup;
+        }
+        P("[%d]::: Registered new user [%s]!!!", connection_fd, login_env.sender);
+    }
+    else // If user file is found, then proceed with authentication
+    {
+        // Read the password from the user file
+        if (unlikely(fgets(stored_password, sizeof(stored_password), user_file) == NULL))
+        {
+            PSE("::: Failed to read stored password for user [%s]", login_env.sender);
+            fclose(user_file);
+            goto cleanup;
+        }
+        fclose(user_file);
+        stored_password[strcspn(stored_password, "\r\n")] = '\0';
 
+        // Notify client that the user exists and we expect a password
+        response_code = NO_ERROR;
+        if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+        {
+            PSE("::: Failed to send login-ready code to [%s]", login_env.sender);
+            goto cleanup;
+        }
+
+        int attempts = 0;
+        int authenticated = 0;  // boolean flag, 0 = false, 1 = true
+        while (attempts < MAX_PASSWORD_ATTEMPTS && !authenticated)
+        {
+            received = recv(connection_fd, client_password, sizeof(client_password), 0);
+            if (unlikely(received <= 0))
+            {
+                PSE("::: Failed to receive password attempt %d for [%s]", attempts + 1, login_env.sender);
+                goto cleanup;
+            }
+            client_password[PASSWORD_SIZE_CHARS - 1] = '\0';
+            client_password[strcspn(client_password, "\r\n")] = '\0';
+
+            if (strcmp(client_password, stored_password) == 0)  // Passwords match case
+            {
+                authenticated = 1;
+                response_code = NO_ERROR;
+                P("[%d]::: User [%s] authenticated", connection_fd, login_env.sender);
+            }
+            else                                                // Passwords do not match case
+            {
+                attempts++;
+                response_code = WRONG_PASSWORD;
+                P("[%d]::: Wrong password for [%s] (attempt %d/%d)", connection_fd, login_env.sender, attempts, MAX_PASSWORD_ATTEMPTS);
+            }
+
+            if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+            {
+                PSE("::: Failed to send authentication result to [%s]", login_env.sender);
+                goto cleanup;
+            }
+
+            if (!authenticated && attempts >= MAX_PASSWORD_ATTEMPTS)
+            {
+                P("[%d]::: Max password attempts reached for [%s]", connection_fd, login_env.sender);
+                goto cleanup;
+            }
+        }
+    }
+
+    P("[%d]::: Login handled successfully for [%s]", connection_fd, login_env.sender);
+
+cleanup:
     // Closing the connection before exiting the thread
     P("[%d]::: Closing connection fd: %d", connection_fd, connection_fd);
     if(unlikely(close(connection_fd) < 0))
@@ -218,7 +338,7 @@ int main(int argc, char** argv)
                                               // But won't the elements of the array be overwritten by the next connections?
                                               // No, since the size of the array is the size of the max backlog, so if an element is being overwritten then the thread assigned to that connetion had already closed said connection
     pthread_t thread_id_array[MAX_BACKLOG];   // The thread id array in which we store the thread ids
-                                              // @note: we are not joining the threads anywhere, so this is not exactly useful, but whatever
+                                              // @note: we are not joining the threads anywhere, so this is not exactly useful, but may be in future implementations or for debugging
     while (1)
     {
         P("Waiting for incoming connections...");

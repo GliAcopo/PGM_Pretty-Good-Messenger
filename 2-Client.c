@@ -99,115 +99,230 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
 int main(int argc, char** argv)
 {
     printf("Welcome to PGM client!\n");
-    p("Testing p macro");
-    pe("Testing pe macro");
-    DEBUG_PRINT("Testing DEBUG_PRINT macro");
-    p("Printing ascii art and name");
+    P("Printing ascii art and name");
     fprintf(stdout, "%s", ascii_art);
     fprintf(stdout, "Program name: %s\n", program_name);
 
 
-    // AUTHENTICATE THE USER 
-    LOGIN_SESSION_ENVIRONMENT env;
 
-	char redo;
+
+	/* -------------------------------------------------------------------------- */
+	/*                            GET THE USERNAME                                */
+	/* -------------------------------------------------------------------------- */
+	LOGIN_SESSION_ENVIRONMENT env;
+
+	char redo = 'y';
 	do
 	{
-		printf("Input your username:\n>");
+		printf(">>>Input your username:\n>");
 		fflush(stdout);
 
 		char *ret;
 		do
 		{
-			if (unlikely((ret = fgets(&env.sender, USERNAME_SIZE_CHARS, stdin)) == NULL))
+			if (unlikely((ret = fgets(env.sender, USERNAME_SIZE_CHARS, stdin)) == NULL))
 			{
-				PSE("Got null string, retry");
+				PSE(">>> Got null string, retry");
 			}
 		} while (ret == NULL);
 
-		P("Read name: %s\nWould you like to continue the login with this username? [Y/n]\n");
+		env.sender[strcspn(env.sender, "\r\n")] = '\0'; // remove newline for network send
+
+		P(">>> Read name: %s\nWould you like to continue the login with this username? [Y/n]\n", env.sender);
 		fflush(stdout);
 
 		redo = fgetc(stdin);
-	} while (redo != 'n' || redo != 'N');
+		int c;
+		while ((c = getchar()) != '\n' && c != EOF) { } // flush trailing input
+	} while (redo == 'n' || redo == 'N');
 
-	// open IPv4 socket, ask server IP, send username and wait for a response 
 
-	{
+
+
+	/* -------------------------------------------------------------------------- */
+	/*                              CONNECT TO SOCKET                             */
+	/* -------------------------------------------------------------------------- */
+	// open IPv4 socket, ask server IP, send username and wait for a response
+	
 		int sockfd = -1;
 		struct sockaddr_in srv = {0};
 		char server_ip[INET_ADDRSTRLEN];
 
-		P("Enter server IPv4 address (e.g. 192.168.1.10):");
+		P("[%s] >>> Enter server IPv4 address (e.g. 192.168.1.10):", env.sender);
 		fflush(stdout);
-		if (fgets(server_ip, sizeof(server_ip), stdin) == NULL) {
-			PSE("Failed to read server IP");
+		if (unlikely(fgets(server_ip, sizeof(server_ip), stdin) == NULL)) {
+			PSE("[%s] >>> Failed to read server IP", env.sender);
 			return(1);
 		}
 		/* strip newline */
 		server_ip[strcspn(server_ip, "\r\n")] = '\0';
 
-		const uint16_t SERVER_PORT = 12345; /* change if needed */
+		// Ask for the server port for the user
+		char port_input[16] = {0};
+		printf("Enter server port (1-65535):\n>");
+		fflush(stdout);
+		if (unlikely(fgets(port_input, sizeof(port_input), stdin) == NULL)) {
+			PSE("[%s] >>> Failed to read server port", env.sender);
+			return(1);
+		}
+		char *endptr = NULL;
+		long port_long = strtol(port_input, &endptr, 10);
+		if (endptr == port_input || port_long <= 0 || port_long > 65535) {
+			P("[%s] >>> Invalid port number", env.sender);
+			return(1);
+		}
+		const uint16_t SERVER_PORT = (uint16_t)port_long;
 
 		sockfd = socket(AF_INET, SOCK_STREAM, 0);
-		if (sockfd < 0) {
-			PSE("socket()");
+		if (unlikely(sockfd < 0)) {
+			PSE("[%s] >>> socket()", env.sender);
 			return(1);
 		}
 
 		srv.sin_family = AF_INET;
 		srv.sin_port = htons(SERVER_PORT);
-		if (inet_pton(AF_INET, server_ip, &srv.sin_addr) <= 0) {
-			PSE("Invalid IPv4 address");
+		if (unlikely(inet_pton(AF_INET, server_ip, &srv.sin_addr) <= 0)) {
+			PSE("[%s] >>> Invalid IPv4 address", env.sender);
 			close(sockfd);
 			return(1);
 		}
 
-		P("Connecting to %s:%u ...", server_ip, SERVER_PORT);
-		if (connect(sockfd, (struct sockaddr *)&srv, sizeof(srv)) < 0) {
-			PSE("connect()");
+		P("[%s] >>> Connecting to %s:%u ...", env.sender, server_ip, SERVER_PORT);
+		if (unlikely(connect(sockfd, (struct sockaddr *)&srv, sizeof(srv)) < 0)) {
+			PSE("[%s] >>> connect()", env.sender);
 			close(sockfd);
 			return(1);
 		}
+	
 
-		/* prepare username (strip possible newline) and send */
-		char username[USERNAME_SIZE_CHARS];
-		strncpy(username, env.sender, sizeof(username));
-		username[sizeof(username)-1] = '\0';
+
+
+
+		/* -------------------------------------------------------------------------- */
+		/*                            SERVER AUTHENTICATION                           */
+		/* -------------------------------------------------------------------------- */
+	{
+		/* prepare username and send */
+		char* username = &env.sender[0];
+		username[USERNAME_SIZE_CHARS - 1] = '\0';
 		username[strcspn(username, "\r\n")] = '\0';
 
-		ssize_t sent = send(sockfd, username, strlen(username) + 1, 0); /* include nul for convenience */
-		if (sent < 0) {
-			PSE("send()");
+		P("[%s] >>> Sending username: %s", env.sender, username);
+
+		ssize_t sent = send(sockfd, username, strlen(username) + 1, 0); /* also send the null byte */
+		if (unlikely(sent < 0)) {
+			PSE("[%s] >>> send()", env.sender);
 			close(sockfd);
 			return(1);
 		}
 
-		/* wait for a single response from server */
-		char resp[512];
-		ssize_t recvd = recv(sockfd, resp, sizeof(resp) - 1, 0);
-		if (recvd < 0) {
-			PSE("recv()");
+		/* wait for a response from server (ERROR_CODE) */
+		ERROR_CODE server_code = ERROR;
+		ssize_t recvd = recv(sockfd, &server_code, sizeof(server_code), MSG_WAITALL); /* MSG_WAITALL On  SOCK_STREAM  sockets this requests that the function block until the full amount of data can be returned. The function may return the smaller amount of data if the socket is a message-based socket, if a signal is caught, if the connection is  termi-nated, if MSG_PEEK was specified, or if an error is pending for the socket. */
+		if (unlikely(recvd != sizeof(server_code))) {
+			PSE("[%s] >>> Failed to receive initial server code (got %zd bytes)", env.sender, recvd);
 			close(sockfd);
 			return(1);
 		}
-		resp[recvd] = '\0';
-		P("Server response: %s", resp);
+		P("[%s] >>> Initial server response: %s", env.sender, convert_error_code_to_string(server_code));
+
+		// Depending on the server response code, either register or authenticate
+		if (unlikely(server_code == START_REGISTRATION)) { // registration path
+			/* registration path */
+			char password[PASSWORD_SIZE_CHARS];
+			printf("User not found, please register.\nInsert new password:\n>");
+			fflush(stdout);
+			if (unlikely(fgets(password, sizeof(password), stdin) == NULL)) {
+				PSE("[%s] >>> Failed to read password", env.sender);
+				close(sockfd);
+				return(1);
+			}
+			password[strcspn(password, "\r\n")] = '\0';
+
+			sent = send(sockfd, password, strlen(password) + 1, 0);
+			if (unlikely(sent < 0)) {
+				PSE("[%s] >>> Failed to send registration password", env.sender);
+				close(sockfd);
+				return(1);
+			}
+
+			recvd = recv(sockfd, &server_code, sizeof(server_code), MSG_WAITALL);
+			if (unlikely(recvd != sizeof(server_code))) {
+				PSE("[%s] >>> Failed to receive registration confirmation (got %zd bytes)", env.sender, recvd);
+				close(sockfd);
+				return(1);
+			}
+			if (unlikely(server_code != NO_ERROR)) {
+				P("[%s] >>> Registration failed: %s", env.sender, convert_error_code_to_string(server_code));
+				close(sockfd);
+				return(1);
+			}
+			P("[%s] >>> Registration successful", env.sender);
+
+		} else if (server_code == NO_ERROR) { // authentication path
+			/* existing user, perform login */
+			// const int MAX_PASSWORD_ATTEMPTS = 3; --- DEFINED IN 3-Global-Variables-and-Functions.h ---
+
+			int attempt = 0;
+			int authenticated = 0;
+			char password[PASSWORD_SIZE_CHARS];
+
+			while (attempt < MAX_PASSWORD_ATTEMPTS && !authenticated) {
+				printf("Insert password:\n>");
+				fflush(stdout);
+				if (unlikely(fgets(password, sizeof(password), stdin) == NULL)) {
+					PSE("[%s] >>> Failed to read password", env.sender);
+					close(sockfd);
+					return(1);
+				}
+				password[strcspn(password, "\r\n")] = '\0';
+
+				sent = send(sockfd, password, strlen(password) + 1, 0);
+				if (unlikely(sent < 0)) {
+					PSE("[%s] >>> Failed to send password attempt", env.sender);
+					close(sockfd);
+					return(1);
+				}
+
+				recvd = recv(sockfd, &server_code, sizeof(server_code), MSG_WAITALL);
+				if (unlikely(recvd != sizeof(server_code))) {
+					PSE("[%s] >>> Failed to receive auth response (got %zd bytes)", env.sender, recvd);
+					close(sockfd);
+					return(1);
+				}
+
+				if (server_code == NO_ERROR) {
+					P("[%s] >>> Authentication successful", env.sender);
+					authenticated = 1;
+				} else {
+					attempt++;
+					P("[%s] >>> Authentication failed: %s (%d/%d)", env.sender, convert_error_code_to_string(server_code), attempt, MAX_PASSWORD_ATTEMPTS);
+					if (attempt >= MAX_PASSWORD_ATTEMPTS) {
+						P("[%s] >>> Maximum attempts reached, closing.", env.sender);
+						close(sockfd);
+						return(1);
+					}
+				}
+			}
+		} else {
+			P("[%s] >>> Unexpected server response: %s", env.sender, convert_error_code_to_string(server_code));
+			close(sockfd);
+			return(1);
+		}
 
 		/* close socket (or keep it open for further communication) */
 		close(sockfd);
 	}
 
-	// ----------------------------------------------------------------------------------------------------------------------------------------
-    
-    
-    // Ask for the server IP and connect to it
-    
-    // Once connected, download messages
 
-    // Ask the user if he wants to read or send messages
 
-    p("Exiting program");
+	/* -------------------------------------------------------------------------- */
+	/*                         MESSAGE SENDING AND READING                        */
+	/* -------------------------------------------------------------------------- */
+    
+    
+
+    P("Exiting program");
     return(0);
 }
 

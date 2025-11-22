@@ -65,6 +65,8 @@ typedef enum ERROR_CODE
     // NULL passed as parameters to function
     NULL_PARAMETERS = -7, 
     EXIT_PROGRAM = -99, // A return value that asks whoever called the program to explicitly close it, we don't close it here because there may be some unsaved work or other close routines to handle
+    START_REGISTRATION = -100, // Used to indicate that the user wants to start the registration process
+    WRONG_PASSWORD = -101, // Used to indicate that the password provided is wrong
 } ERROR_CODE;
 
 extern const char *convert_error_code_to_string(const ERROR_CODE code);
@@ -73,11 +75,12 @@ extern const char *convert_error_code_to_string(const ERROR_CODE code);
 /*                                              SIZES, CONSTANTS, VARIABLES                                      */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
-enum sizes{
+enum sizes_and_constants{
     MESSAGE_SIZE_CHARS = 4096, // 4096
     // RSA_KEY_SIZE_BYTES = 256, // RSA-2048 BITS 256 bytes
     USERNAME_SIZE_CHARS = 64,
     PASSWORD_SIZE_CHARS = 256,
+    MAX_PASSWORD_ATTEMPTS = 3,
 };
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */

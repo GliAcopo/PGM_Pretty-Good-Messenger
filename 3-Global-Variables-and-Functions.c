@@ -47,6 +47,10 @@ const char *convert_error_code_to_string(const ERROR_CODE code)
 	return "NULL_PARAMETERS";
     case EXIT_PROGRAM:
         return "EXIT_PROGRAM";
+        case START_REGISTRATION:
+        return "START_REGISTRATION";
+    case WRONG_PASSWORD:
+        return "WRONG_PASSWORD";
     default:
         return "UNKNOWN_ERROR_CODE";
     }

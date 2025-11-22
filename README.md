@@ -24,6 +24,13 @@ da utenti autorizzati (deve essere quindi previsto un meccanismo di autenticazio
     - **Overhead** Both are compiled away into numbers. So there is no overhead
 - All the code documentation in the form of comments will be written using the doxigen format.
 
+# Server
+I have implemented a server that opens up a thread for every connection (user connected) it receives.
+
+I have decided that for every user registered there will be a file that uses their username, and the first line of that file will be their password.
+
+Once the server receives the username, it searches for a file with the same name as the username, if none is found then the server communicates to the Client to start the login routine by sending a code (START_REGISTRATION = -100 contained in the ERROR_CODE enum).
+
 # Code Documentation
 
 ## SECURE functions
