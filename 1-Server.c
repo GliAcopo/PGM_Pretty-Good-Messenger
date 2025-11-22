@@ -16,6 +16,7 @@
 #include <stdio.h>      // printf, fprintf
 #include <stdlib.h>     // exit, EXIT_FAILURE, EXIT_SUCCESS
 #include <unistd.h>     // close, access
+#include <pthread.h>    // pthread_create, pthread_t, pthread_exit
 #include <sys/socket.h> // socket, bind, listen, accept
 #include <netinet/in.h> // struct sockaddr_in, INADDR_ANY
 #include <arpa/inet.h>  // inet_ntoa
@@ -254,13 +255,14 @@ cleanup:
     }
     P("[%d]:::Connection fd: %d closed, thread exiting", connection_fd, connection_fd);
     pthread_exit(NULL);
+    return NULL; // Defensive, should not be reached
 }
 
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                                   MAIN LOOP                                                   */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
-int main(int argc, char** argv)
+int main(int, char**) // Unused parameters argc argv
 {
     printf("Welcome to PGM server!\n");
     PIE("Testing PIE macro");
@@ -362,8 +364,8 @@ int main(int argc, char** argv)
         }
         else{
             // Successfully created thread, increment the index in a circular manner
-            thread_args_connections_index = (thread_args_connections_index + 1) % MAX_BACKLOG;
-            P("Thread [%u] created successfully for connection fd: %d\n", thread_id_array[thread_args_connections_index], new_connection);
+            thread_args_connections_index = (uint8_t)((thread_args_connections_index + 1) % MAX_BACKLOG); // Conversion to silence gcc lamenting
+            P("Thread [%lu] created successfully for connection fd: %d\n", (unsigned long)thread_id_array[thread_args_connections_index], new_connection);
         }
         // close(new_connection); It's the thread's resposibility to close the socket when done
     }

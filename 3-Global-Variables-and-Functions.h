@@ -133,7 +133,8 @@ typedef struct {
 /*                                              HOME FOLDER CREATION                                             */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
-extern inline ERROR_CODE create_home_folder(void);
+// @deprecated
+// extern inline ERROR_CODE create_home_folder(void);
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                           PROGRAM NAME AND ASCII ART                                          */

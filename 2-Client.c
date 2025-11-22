@@ -111,31 +111,40 @@ int main(int argc, char** argv)
 	/* -------------------------------------------------------------------------- */
 	LOGIN_SESSION_ENVIRONMENT env;
 
-	char redo = 'y';
-	do
-	{
-		printf(">>>Input your username:\n>");
-		fflush(stdout);
+	P(">>> argc = %d", argc);
 
-		char *ret;
+	if(argc >= 2) // If username passed as parameter
+	{
+		P(">>> Username passed as parameter: %s", argv[1]);
+		snprintf(env.sender, USERNAME_SIZE_CHARS, "%s", argv[1]);
+	}
+	else // Ask for username
+	{
+		unsigned char redo = 'y';	// fgetc() and getchar() return the character read as an unsigned char cast to an int or EOF on end of file or error.
 		do
 		{
-			if (unlikely((ret = fgets(env.sender, USERNAME_SIZE_CHARS, stdin)) == NULL))
+			printf(">>>Input your username:\n>");
+			fflush(stdout);
+
+			char *ret;
+			do
 			{
-				PSE(">>> Got null string, retry");
-			}
-		} while (ret == NULL);
+				if (unlikely((ret = fgets(env.sender, USERNAME_SIZE_CHARS, stdin)) == NULL))
+				{
+					PSE(">>> Got null string, retry");
+				}
+			} while (ret == NULL);
 
-		env.sender[strcspn(env.sender, "\r\n")] = '\0'; // remove newline for network send
+			env.sender[strcspn(env.sender, "\r\n")] = '\0'; // remove newline for network send
 
-		P(">>> Read name: %s\nWould you like to continue the login with this username? [Y/n]\n", env.sender);
-		fflush(stdout);
+			P(">>> Read name: %s\nWould you like to continue the login with this username? [Y/n]\n", env.sender);
+			fflush(stdout);
 
-		redo = fgetc(stdin);
-		int c;
-		while ((c = getchar()) != '\n' && c != EOF) { } // flush trailing input
-	} while (redo == 'n' || redo == 'N');
-
+			redo = (unsigned char)(fgetc(stdin));
+			int c;
+			while ((c = getchar()) != '\n' && c != EOF) { } // flush trailing input
+		} while (redo == 'n' || redo == 'N');
+	}
 
 
 
@@ -150,21 +159,40 @@ int main(int argc, char** argv)
 
 		P("[%s] >>> Enter server IPv4 address (e.g. 192.168.1.10):", env.sender);
 		fflush(stdout);
-		if (unlikely(fgets(server_ip, sizeof(server_ip), stdin) == NULL)) {
-			PSE("[%s] >>> Failed to read server IP", env.sender);
-			return(1);
+		if(argc >= 3) // If server ip passed as parameter
+		{
+			P(">>> Server IP passed as parameter: %s", argv[2]);
+			snprintf(server_ip, sizeof(server_ip), "%s", argv[2]);
+		}
+		else		  // Else ask the user
+		{
+			if (unlikely(fgets(server_ip, sizeof(server_ip), stdin) == NULL))
+			{
+				PSE("[%s] >>> Failed to read server IP", env.sender);
+				return (1);
+			}
 		}
 		/* strip newline */
 		server_ip[strcspn(server_ip, "\r\n")] = '\0';
+
 
 		// Ask for the server port for the user
 		char port_input[16] = {0};
 		printf("Enter server port (1-65535):\n>");
 		fflush(stdout);
-		if (unlikely(fgets(port_input, sizeof(port_input), stdin) == NULL)) {
-			PSE("[%s] >>> Failed to read server port", env.sender);
-			return(1);
+		if(argc >= 4)
+		{
+			P(">>> Server port passed as parameter: %s", argv[3]);
+			snprintf(port_input, sizeof(port_input), "%s", argv[3]);
 		}
+		else
+		{
+			if (unlikely(fgets(port_input, sizeof(port_input), stdin) == NULL)) {
+				PSE("[%s] >>> Failed to read server port", env.sender);
+				return(1);
+			}
+		}
+		
 		char *endptr = NULL;
 		long port_long = strtol(port_input, &endptr, 10);
 		if (endptr == port_input || port_long <= 0 || port_long > 65535) {
@@ -232,10 +260,19 @@ int main(int argc, char** argv)
 			char password[PASSWORD_SIZE_CHARS];
 			printf("User not found, please register.\nInsert new password:\n>");
 			fflush(stdout);
-			if (unlikely(fgets(password, sizeof(password), stdin) == NULL)) {
-				PSE("[%s] >>> Failed to read password", env.sender);
-				close(sockfd);
-				return(1);
+
+			if(argc >= 5)
+			{
+				P("[%s] >>> <password> passed as parameter: %s", env.sender, argv[4]);
+				snprintf(password, sizeof(password), "%s", argv[4]);
+			}
+			else
+			{
+				if (unlikely(fgets(password, sizeof(password), stdin) == NULL)) {
+					PSE("[%s] >>> Failed to read password", env.sender);
+					close(sockfd);
+					return(1);
+				}
 			}
 			password[strcspn(password, "\r\n")] = '\0';
 
@@ -270,10 +307,20 @@ int main(int argc, char** argv)
 			while (attempt < MAX_PASSWORD_ATTEMPTS && !authenticated) {
 				printf("Insert password:\n>");
 				fflush(stdout);
-				if (unlikely(fgets(password, sizeof(password), stdin) == NULL)) {
-					PSE("[%s] >>> Failed to read password", env.sender);
-					close(sockfd);
-					return(1);
+
+				if (argc >= 5)
+				{
+					P("[%s] >>> <password> passed as parameter: %s", env.sender, argv[4]);
+					snprintf(password, sizeof(password), "%s", argv[4]);
+				}
+				else
+				{
+					if (unlikely(fgets(password, sizeof(password), stdin) == NULL))
+					{
+						PSE("[%s] >>> Failed to read password", env.sender);
+						close(sockfd);
+						return (1);
+					}
 				}
 				password[strcspn(password, "\r\n")] = '\0';
 

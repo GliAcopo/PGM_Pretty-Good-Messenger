@@ -57,6 +57,7 @@ CFLAGS  := -std=c11 -g -O2 -Wall -Wextra \
            -Wformat=2 -Wstrict-overflow=5 -Wundef \
            -Werror=return-type -Wuninitialized -Wmaybe-uninitialized \
            -fstack-protector-strong \
+           -pthread \
            -fsanitize=address,undefined,leak --coverage \
            -MMD -MP
 
@@ -99,5 +100,4 @@ clean:
 
 # Automatically pull in dependency files if they exist.
 -include $(SERVER_DEPS) $(CLIENT_DEPS)
-
 
