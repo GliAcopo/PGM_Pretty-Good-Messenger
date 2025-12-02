@@ -10,7 +10,7 @@
  */
 
 #define _GNU_SOURCE     // To get defns of NI_MAXSERV and NI_MAXHOST 
-                        // WARNING: apparently this must be defined before any other inclusion, (I learned the HARD way...)
+                        // WARNING: apparently this must be defined before any other inclusion, (Learned the hard way, do not remove this line))
 #include "3-Global-Variables-and-Functions.h"
 #include "1-Server.h"
 #include <stdio.h>      // printf, fprintf
@@ -34,6 +34,8 @@
 // ierror, an internal debug substitute to errno
 ERROR_CODE ierrno = NO_ERROR;
 
+// port number to use in the server, if -1 or > 65535 then an ephemeral is used instead
+const int32_t PORT_NUMBER = 666; // log_2(65535) = 16 bits, 16-1= 15 (sign) so (to be sure) I decided to use a 32 bit 
 
 /**
  * @brief Prints all the local IP addresses of the machine
@@ -285,7 +287,16 @@ int main(int, char**) // Unused parameters argc argv
     struct sockaddr_in address = {0}; // Initializing the strct to 0
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY; // Accept connections from any IP address (“accept connections on whatever IPs this host currently has.”)
-    address.sin_port = 0;                 // Ephimeral port since we do not care, let the OS choose the first free one, actually a good thing since we do not want to worry about clashing port numbers
+    if (PORT_NUMBER > 0 && PORT_NUMBER < 65536)
+    {
+        address.sin_port = htons(PORT_NUMBER); // htons converts the port number from host byte order to network byte order (big endian)
+    }
+    else
+    {
+        P("Using ephemeral port");
+        address.sin_port = 0; // Ephimeral port since we do not care, let the OS choose the first free one, actually a good thing since we do not want to worry about clashing port numbers
+    }
+    // Binding the socket to the specified IP address and port number
     if (unlikely(bind(skt_fd, (struct sockaddr *)&address, sizeof(address)) < 0))
     {
         PSE("Socket bind failed");
