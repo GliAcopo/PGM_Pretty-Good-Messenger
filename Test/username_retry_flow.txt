@@ -1,0 +1,7 @@
+bad user with spaces
+n
+clean_user
+y
+127.0.0.1
+666
+RetryPass123
