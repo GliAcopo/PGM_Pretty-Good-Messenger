@@ -237,7 +237,9 @@ success:
 | `0555` | r-xr-xr-x | Read/execute for everyone (no write)        |
 */
 
-
+const char *file_suffix_user_data = ".pgm"; // Suffix for user data files
+const char *password_filename = ".PASSWORD"; // File to store passwords
+const char *data_filename = ".DATA";         // File to store user data like number of messages sent, received, etc.
 const char *program_name = "PGM";
 const char *ascii_art =
     "          _____                    _____                    _____          \n"

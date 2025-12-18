@@ -128,12 +128,12 @@ void *thread_routine(void *arg)
         goto cleanup;
     }
     login_env.sender[USERNAME_SIZE_CHARS - 1] = '\0';                     // Defensive null-termination
-    login_env.sender[strcspn(login_env.sender, "\r\n")] = '\0';           // Strip newline if present @note: \r is for Windows compatibility. I do not remember if the professor told us only for UNIX systems or not
+    login_env.sender[strcspn(login_env.sender, "\n")] = '\0';           // Strip newline if present @note: \r for Windows compatibility not needed
     P("[%d]::: Read username [%s]", connection_fd, login_env.sender);
 
     //  2) Decide whether to register or authenticate
-    char user_file_path[USERNAME_SIZE_CHARS + 4] = {0}; // room for simple suffix if i want, like ".txt"
-    if (unlikely(snprintf(user_file_path, sizeof(user_file_path), "%s", login_env.sender) < 0))
+    char user_file_path[USERNAME_SIZE_CHARS + strlen(file_suffix_user_data)] = {0}; // room for simple suffix if i want, like ".txt"
+    if (unlikely(snprintf(user_file_path, sizeof(user_file_path), "%s%s", login_env.sender, file_suffix_user_data) < 0))
     {
         PSE("::: Failed to build user file path for username: %s", login_env.sender);
         goto cleanup;
@@ -247,6 +247,12 @@ void *thread_routine(void *arg)
 
     P("[%d]::: Login handled successfully for [%s]", connection_fd, login_env.sender);
 
+    /* -------------------------------------------------------------------------- */
+    /*                          MESSAGE SENDING TO USERS                          */
+    /* -------------------------------------------------------------------------- */
+
+    // @todo implement message sending and receiving here
+
 cleanup:
     // Closing the connection before exiting the thread
     P("[%d]::: Closing connection fd: %d", connection_fd, connection_fd);
@@ -257,7 +263,7 @@ cleanup:
     }
     P("[%d]:::Connection fd: %d closed, thread exiting", connection_fd, connection_fd);
     pthread_exit(NULL);
-    return NULL; // Defensive, should not be reached
+    return NULL; // Should not be reached
 }
 
 

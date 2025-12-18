@@ -67,7 +67,18 @@ typedef enum ERROR_CODE
     EXIT_PROGRAM = -99, // A return value that asks whoever called the program to explicitly close it, we don't close it here because there may be some unsaved work or other close routines to handle
     START_REGISTRATION = -100, // Used to indicate that the user wants to start the registration process
     WRONG_PASSWORD = -101, // Used to indicate that the password provided is wrong
+    USER_NOT_FOUND = -102, // Used to indicate that the user was not found in the most general sense, that means both during login and message sending
 } ERROR_CODE;
+
+typedef enum MESSAGE_CODE
+{
+    REQUEST_SEND_MESSAGE = 3,
+    REQUEST_LIST_REGISTERED_USERS = 2,
+    REQUEST_LOAD_PREVIOUS_MESSAGES = 1,
+    MESSAGE_SENT = 0,
+    MESSAGE_RECEIVED = 1,
+    MESSAGE_ERROR = -1,
+} MESSAGE_CODE;
 
 extern const char *convert_error_code_to_string(const ERROR_CODE code);
 
@@ -89,7 +100,8 @@ enum sizes_and_constants{
 typedef struct MESSAGE {
     char sender[USERNAME_SIZE_CHARS];
     char recipient[USERNAME_SIZE_CHARS];
-    char message[MESSAGE_SIZE_CHARS];
+    unsigned int message_length;
+    char *message;
 } MESSAGE;
 
 /*

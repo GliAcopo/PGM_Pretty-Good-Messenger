@@ -357,7 +357,7 @@ int main(int argc, char** argv)
 			return(1);
 		}
 
-		/* close socket (or keep it open for further communication) */
+		/* close socket*/
 		close(sockfd);
 	}
 

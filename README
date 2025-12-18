@@ -1,0 +1,31 @@
+### Message handling
+When the authentication succeeds, the server thread dedicated to the client enters an infinite loop in wich the server waits for one of these three codes (defined in the enum `MESSAGE_CODE` in the file `3-Global-Variables-and-Functions.c`) to be sent by the client. 
+- `REQUEST_SEND_MESSAGE`: The servers prepares to receive a `MESSAGE` struct and send the message to the specified user. The client sends a `MESSAGE` struct.
+    - Server reads the recipient of the message. Client wait for response.
+        - If no user with the specified username is found then the server responds with `ERROR_CODE` `USER_NOT_FOUND`.
+        - Else the server responds with NO ERROR
+    - Server waits for message, allocating buffer of size `message_length` contained in the `MESSAGE` struct. Client sends message.
+    - 
+- `REQUEST_LIST_REGISTERED_USERS`: The server sends to the client a list of `strings` (usernames) separated by newlines `\n`, it does so by listing the directory contents and picking only the files wich suffix matches `file_suffix_user_data` string found in `3-Global-Variables-and-Functions.c`.
+- `REQUEST_LOAD_PREVIOUS_MESSAGES`: After receiving the code, the server waits for another unsigned integer value from the client, this value represents up until what message to load (send to the client) (0 is considered the latest one).
+    - The server takes from the user file first the message struct and sends it to the client,
+    - reads the message lenght, fetches the message from the file, and sends it to the client.
+        - (since the file names are standard ISO 8601: YYYYMMDDHHMMSS, file searching is simply "ordering a list of numbers from greater (latest) to lesser (oldest))
+    - The client reconstructs the Message struct and adds it to the messages array of MESSAGE structs (the message body is dynamically allocated and the pointer is assigned to the `char *message` field in the `MESSAGE` struct).
+
+
+### File and persistent storage
+Only the server stores the messages, since the professor said that I cannot assume that I have storage permissions on Client devices.
+- For every registered user, a folder with its name is created.
+- The file named with the name specified in the `password_filename` variable contains the user password.
+- The file named with the name specified in the `data_filename` variable conains
+    - First line: unsigned integer: number of messages received (currently in the folder)
+- Every single file apart from those is a message:
+    - Naming convention for the message files is `<date of receival><time of receival><file_suffix_user_data>`.
+        - The format for the date is standard ISO 8601: YYYYMMDDHHMMSS without separators, so file fetching and ordering is easier.
+
+
+
+These codes are sent by the client to prepare both ends to send-receive data.
+
+If the 
