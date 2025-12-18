@@ -22,6 +22,7 @@
 #include <arpa/inet.h>  // inet_ntoa
 #include <ifaddrs.h>    // struct ifaddrs, getifaddrs, freeifaddrs
 #include <netdb.h>      // NI_MAXHOST, getnameinfo
+#include <sys/stat.h>   // stat, mkdir
 // #include <linux/if_link.h> // IFLA_ADDRESS
 
 
@@ -132,16 +133,53 @@ void *thread_routine(void *arg)
     P("[%d]::: Read username [%s]", connection_fd, login_env.sender);
 
     //  2) Decide whether to register or authenticate
-    char user_file_path[USERNAME_SIZE_CHARS + strlen(file_suffix_user_data)] = {0}; // room for simple suffix if i want, like ".txt"
-    if (unlikely(snprintf(user_file_path, sizeof(user_file_path), "%s%s", login_env.sender, file_suffix_user_data) < 0))
+    char user_dir_path[USERNAME_SIZE_CHARS] = {0};
+    if (unlikely(snprintf(user_dir_path, sizeof(user_dir_path), "%s", login_env.sender) < 0))
     {
-        PSE("::: Failed to build user file path for username: %s", login_env.sender);
+        PSE("::: Failed to build user directory path for username: %s", login_env.sender);
         goto cleanup;
     }
 
-    FILE *user_file = fopen(user_file_path, "r");
-    // Now we start this massive if-else block, depending on whether the user file is found or not we REGISTER or AUTHENTICATE
-    if (user_file == NULL)  // If user file is not found, then start registration
+    struct stat user_dir_stat = {0};
+    int user_dir_missing = 0;
+    if (stat(user_dir_path, &user_dir_stat) == 0)
+    {
+        if (!S_ISDIR(user_dir_stat.st_mode))
+        {
+            PSE("::: User path exists but is not a directory for username: %s", login_env.sender);
+            goto cleanup;
+        }
+    }
+    else
+    {
+        if (errno == ENOENT)
+        {
+            user_dir_missing = 1;
+        }
+        else
+        {
+            PSE("::: Failed to stat user directory for username: %s", login_env.sender);
+            goto cleanup;
+        }
+    }
+
+    char password_path[USERNAME_SIZE_CHARS + 1 + strlen(password_filename) + 1] = {0};
+    if (unlikely(snprintf(password_path, sizeof(password_path), "%s/%s", user_dir_path, password_filename) < 0))
+    {
+        PSE("::: Failed to build password file path for username: %s", login_env.sender);
+        goto cleanup;
+    }
+
+    char data_path[USERNAME_SIZE_CHARS + 1 + strlen(data_filename) + 1] = {0};
+    if (unlikely(snprintf(data_path, sizeof(data_path), "%s/%s", user_dir_path, data_filename) < 0))
+    {
+        PSE("::: Failed to build data file path for username: %s", login_env.sender);
+        goto cleanup;
+    }
+
+    FILE *password_file = NULL;
+    // Now we start this massive if-else block, depending on whether the user folder is found or not we REGISTER or AUTHENTICATE
+    if (user_dir_missing)  // If user folder is not found, then start registration
     {
         // User not found -> ask client to register (using code START_REGISTRATION)
         response_code = START_REGISTRATION;
@@ -162,20 +200,42 @@ void *thread_routine(void *arg)
         client_password[PASSWORD_SIZE_CHARS - 1] = '\0';           // Add null-termination just in case
         client_password[strcspn(client_password, "\r\n")] = '\0';  // Strip newline if present, also \r for Windows compatibility... yada yada 
 
-        // Create user file and store password as the first line
-        user_file = fopen(user_file_path, "w");
-        if (unlikely(user_file == NULL))
+        // Create user folder
+        if (unlikely(mkdir(user_dir_path, 0700) == -1 && errno != EEXIST))
         {
-            PSE("::: Failed to create user file for [%s]", login_env.sender);
+            PSE("::: Failed to create user folder for [%s]", login_env.sender);
             goto cleanup;
         }
-        if (unlikely(fprintf(user_file, "%s\n", client_password) < 0))
+
+        // Create password file and store password as the first line
+        password_file = fopen(password_path, "w");
+        if (unlikely(password_file == NULL))
+        {
+            PSE("::: Failed to create password file for [%s]", login_env.sender);
+            goto cleanup;
+        }
+        if (unlikely(fprintf(password_file, "%s\n", client_password) < 0))
         {
             PSE("::: Failed to write password for new user [%s]", login_env.sender);
-            fclose(user_file);
+            fclose(password_file);
             goto cleanup;
         }
-        fclose(user_file);
+        fclose(password_file);
+
+        // Create data file and initialize received message count
+        FILE *data_file = fopen(data_path, "w");
+        if (unlikely(data_file == NULL))
+        {
+            PSE("::: Failed to create data file for [%s]", login_env.sender);
+            goto cleanup;
+        }
+        if (unlikely(fprintf(data_file, "%u\n", 0u) < 0))
+        {
+            PSE("::: Failed to initialize data file for [%s]", login_env.sender);
+            fclose(data_file);
+            goto cleanup;
+        }
+        fclose(data_file);
 
         response_code = NO_ERROR;
         if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
@@ -185,16 +245,22 @@ void *thread_routine(void *arg)
         }
         P("[%d]::: Registered new user [%s]!!!", connection_fd, login_env.sender);
     }
-    else // If user file is found, then proceed with authentication
+    else // If user folder is found, then proceed with authentication
     {
-        // Read the password from the user file
-        if (unlikely(fgets(stored_password, sizeof(stored_password), user_file) == NULL))
+        // Read the password from the user password file
+        password_file = fopen(password_path, "r");
+        if (unlikely(password_file == NULL))
         {
-            PSE("::: Failed to read stored password for user [%s]", login_env.sender);
-            fclose(user_file);
+            PSE("::: Failed to open password file for user [%s]", login_env.sender);
             goto cleanup;
         }
-        fclose(user_file);
+        if (unlikely(fgets(stored_password, sizeof(stored_password), password_file) == NULL))
+        {
+            PSE("::: Failed to read stored password for user [%s]", login_env.sender);
+            fclose(password_file);
+            goto cleanup;
+        }
+        fclose(password_file);
         stored_password[strcspn(stored_password, "\r\n")] = '\0';
 
         // Notify client that the user exists and we expect a password

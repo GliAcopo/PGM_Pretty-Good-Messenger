@@ -94,6 +94,9 @@ enum sizes_and_constants{
     MAX_PASSWORD_ATTEMPTS = 3,
 };
 
+extern const char *password_filename;
+extern const char *data_filename;
+
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              MESSAGE STRUCT AND METHODS                                       */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
