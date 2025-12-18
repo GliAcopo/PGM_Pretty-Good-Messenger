@@ -23,6 +23,8 @@ Only the server stores the messages, since the professor said that I cannot assu
 - Every single file apart from those is a message:
     - Naming convention for the message files is `<date of receival><time of receival><file_suffix_user_data>`.
         - The format for the date is standard ISO 8601: YYYYMMDDHHMMSS without separators, so file fetching and ordering is easier.
+    - The first thing to be stored in the file is the MESSAGE struct
+    - then the message contents themselves
 
 
 
