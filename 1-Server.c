@@ -117,6 +117,8 @@ void *thread_routine(void *arg)
     ERROR_CODE response_code = NO_ERROR;
     char stored_password[PASSWORD_SIZE_CHARS] = {0};
     char client_password[PASSWORD_SIZE_CHARS] = {0};
+    char *password_path = NULL;
+    char *data_path = NULL;
 
     // Login / registration handshake
     P("[%d]::: Handling login...", connection_fd);
@@ -163,15 +165,27 @@ void *thread_routine(void *arg)
         }
     }
 
-    char password_path[USERNAME_SIZE_CHARS + 1 + strlen(password_filename) + 1] = {0};
-    if (unlikely(snprintf(password_path, sizeof(password_path), "%s/%s", user_dir_path, password_filename) < 0))
+    size_t password_path_len = strlen(user_dir_path) + 1 + strlen(password_filename) + 1;
+    password_path = calloc(password_path_len, sizeof(char));
+    if (unlikely(password_path == NULL))
+    {
+        PSE("::: Failed to allocate password file path for username: %s", login_env.sender);
+        goto cleanup;
+    }
+    if (unlikely(snprintf(password_path, password_path_len, "%s/%s", user_dir_path, password_filename) < 0))
     {
         PSE("::: Failed to build password file path for username: %s", login_env.sender);
         goto cleanup;
     }
 
-    char data_path[USERNAME_SIZE_CHARS + 1 + strlen(data_filename) + 1] = {0};
-    if (unlikely(snprintf(data_path, sizeof(data_path), "%s/%s", user_dir_path, data_filename) < 0))
+    size_t data_path_len = strlen(user_dir_path) + 1 + strlen(data_filename) + 1;
+    data_path = calloc(data_path_len, sizeof(char));
+    if (unlikely(data_path == NULL))
+    {
+        PSE("::: Failed to allocate data file path for username: %s", login_env.sender);
+        goto cleanup;
+    }
+    if (unlikely(snprintf(data_path, data_path_len, "%s/%s", user_dir_path, data_filename) < 0))
     {
         PSE("::: Failed to build data file path for username: %s", login_env.sender);
         goto cleanup;
@@ -320,6 +334,14 @@ void *thread_routine(void *arg)
     // @todo implement message sending and receiving here
 
 cleanup:
+    if (password_path != NULL)
+    {
+        free(password_path);
+    }
+    if (data_path != NULL)
+    {
+        free(data_path);
+    }
     // Closing the connection before exiting the thread
     P("[%d]::: Closing connection fd: %d", connection_fd, connection_fd);
     if(unlikely(close(connection_fd) < 0))
