@@ -1,5 +1,9 @@
 # Test Input Files for `bin/client`
 
+### Integration script
+Run `Test/run_integration.sh` to build, start the server on `PGM_TEST_PORT` (default `6666`), register a new user, attempt a wrong password login, then log in correctly.  
+It writes logs in `/tmp` and leaves the created user folder in the project root.
+
 ### How to run the tests?
 Build the client (`make client`), start the server on the target host/port when needed, then run for example:
 

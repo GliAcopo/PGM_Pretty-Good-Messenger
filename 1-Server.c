@@ -41,8 +41,32 @@ static sem_t current_loggedin_users_semaphore;
 // ierror, an internal debug substitute to errno
 ERROR_CODE ierrno = NO_ERROR;
 
-// port number to use in the server, if -1 or > 65535 then an ephemeral is used instead
-const int32_t PORT_NUMBER = 666; // log_2(65535) = 16 bits, 16-1= 15 (sign) so (to be sure) I decided to use a 32 bit 
+// Default port to use in the server (can be overridden by argv or PGM_SERVER_PORT)
+const int32_t DEFAULT_PORT_NUMBER = 6666; // log_2(65535) = 16 bits, 16-1= 15 (sign) so (to be sure) I decided to use a 32 bit 
+const char *server_port_env = "PGM_SERVER_PORT";
+
+static int32_t parse_port_string(const char *value, int32_t fallback, const char *source)
+{
+    if (value == NULL || value[0] == '\0')
+    {
+        return fallback;
+    }
+
+    char *endptr = NULL;
+    errno = 0;
+    long port_long = strtol(value, &endptr, 10);
+    if (endptr == value || *endptr != '\0' || errno != 0 || port_long < 0 || port_long > 65535)
+    {
+        P("Invalid %s port value [%s], using %d", source, value, fallback);
+        return fallback;
+    }
+    if (port_long > 0 && port_long < 1024)
+    {
+        P("Port %ld from %s requires elevated privileges, using ephemeral port", port_long, source);
+        return 0;
+    }
+    return (int32_t)port_long;
+}
 
 /**
  * @brief Prints all the local IP addresses of the machine
@@ -551,7 +575,7 @@ cleanup:
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                                   MAIN LOOP                                                   */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
-int main(int, char**) // Unused parameters argc argv
+int main(int argc, char** argv)
 {
     printf("Welcome to PGM server!\n");
     PIE("Testing PIE macro");
@@ -564,6 +588,17 @@ int main(int, char**) // Unused parameters argc argv
     {
         PSE("sem_init() failed for current_loggedin_users_semaphore");
         E();
+    }
+
+    int32_t port_number = DEFAULT_PORT_NUMBER;
+    const char *env_port = getenv(server_port_env);
+    if (env_port != NULL)
+    {
+        port_number = parse_port_string(env_port, port_number, "environment");
+    }
+    if (argc >= 2)
+    {
+        port_number = parse_port_string(argv[1], port_number, "argument");
     }
 
     // START SOCKET SERVER HERE
@@ -580,9 +615,11 @@ int main(int, char**) // Unused parameters argc argv
     struct sockaddr_in address = {0}; // Initializing the strct to 0
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY; // Accept connections from any IP address (“accept connections on whatever IPs this host currently has.”)
-    if (PORT_NUMBER > 0 && PORT_NUMBER < 65536)
+    if (port_number > 0 && port_number < 65536)
     {
-        address.sin_port = htons(PORT_NUMBER); // htons converts the port number from host byte order to network byte order (big endian)
+        address.sin_port = htonl(port_number); // htonl converts the port number from host byte order to network byte order (big endian)
+                                               // WARNING: before I used htons here, but it was a mistake since htons is for short (16 bit) and port numbers are 32 bit
+        P("Using specified port: %d", port_number);
     }
     else
     {
