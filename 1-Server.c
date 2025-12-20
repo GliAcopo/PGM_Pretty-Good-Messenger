@@ -593,6 +593,18 @@ void *thread_routine(void *arg)
         case REQUEST_LOAD_PREVIOUS_MESSAGES:
             P("[%d]::: REQUEST_LOAD_PREVIOUS_MESSAGES received (not implemented)", connection_fd);
             break;
+        case REQUEST_LOAD_MESSAGE:
+            P("[%d]::: REQUEST_LOAD_MESSAGE received (not implemented)", connection_fd);
+            break;
+        case REQUEST_LOAD_SPECIFIC_MESSAGE:
+            P("[%d]::: REQUEST_LOAD_SPECIFIC_MESSAGE received (not implemented)", connection_fd);
+            break;
+        case REQUEST_LOAD_UNREAD_MESSAGES:
+            P("[%d]::: REQUEST_LOAD_UNREAD_MESSAGES received (not implemented)", connection_fd);
+            break;
+        case REQUEST_DELETE_MESSAGE:
+            P("[%d]::: REQUEST_DELETE_MESSAGE received (not implemented)", connection_fd);
+            break;
         default:
             P("[%d]::: Unknown MESSAGE_CODE [%d]", connection_fd, request_code);
             break;

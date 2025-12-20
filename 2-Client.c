@@ -157,7 +157,7 @@ int main(int argc, char** argv)
 		struct sockaddr_in srv = {0};
 		char server_ip[INET_ADDRSTRLEN];
 
-		P("[%s] >>> Enter server IPv4 address (e.g. 192.168.1.10):", env.sender);
+		P("[%s] >>> Enter server IPv4 address (default is local 0.0.0.0) (e.g. 192.168.1.10):", env.sender);
 		fflush(stdout);
 		if(argc >= 3) // If server ip passed as parameter
 		{
@@ -173,12 +173,16 @@ int main(int argc, char** argv)
 			}
 		}
 		/* strip newline */
+		if (strlen(server_ip) == 0) {
+			/* default to local */
+			snprintf(server_ip, sizeof(server_ip), "0.0.0.0");
+		}
 		server_ip[strcspn(server_ip, "\r\n")] = '\0';
 
 
 		// Ask for the server port for the user
 		char port_input[16] = {0};
-		printf("Enter server port (1-65535):\n>");
+		printf("Enter server port (default is 6666) (1-65535):\n>");
 		fflush(stdout);
 		if(argc >= 4)
 		{
@@ -357,8 +361,6 @@ int main(int argc, char** argv)
 			return(1);
 		}
 
-		/* close socket*/
-		close(sockfd);
 	}
 
 
@@ -366,11 +368,100 @@ int main(int argc, char** argv)
 	/* -------------------------------------------------------------------------- */
 	/*                         MESSAGE SENDING AND READING                        */
 	/* -------------------------------------------------------------------------- */
-    
-    
+	int running = 1;
+	while (running)
+	{
+		printf("\nSelect operation:\n");
+		printf("  [1] Send message\n");
+		printf("  [2] List registered users\n");
+		printf("  [3] Load message\n");
+		printf("  [4] Load unread messages list\n");
+		printf("  [5] Delete message\n");
+		printf("  [q] Quit\n> ");
+		fflush(stdout);
 
-    P("Exiting program");
-    return(0);
+		// Allow for a more "dirty" input reading, we will just read a line and take the first non-specia character
+		char choice_buf[16] = {0};
+		if (unlikely(fgets(choice_buf, sizeof(choice_buf), stdin) == NULL))
+		{
+			PSE("[%s] >>> Failed to read menu choice", env.sender);
+			break;
+		}
+		P("[%s] >>> Read choice: %s", env.sender, choice_buf);
+
+		// Take the first non-special character (clean input)
+		char choice = '\0';
+		for (size_t i = 0; choice_buf[i] != '\0'; i++)
+		{
+			if (choice_buf[i] != ' ' && choice_buf[i] != '\t' && choice_buf[i] != '\n' && choice_buf[i] != '\r')
+			{
+				choice = choice_buf[i];
+				break;
+			}
+		}
+
+		// Map choice to MESSAGE_CODE
+		MESSAGE_CODE request_code = MESSAGE_ERROR;
+		switch (choice)
+		{
+		case '1':
+		case 's':
+		case 'S':
+			request_code = REQUEST_SEND_MESSAGE;
+			break;
+		case '2':
+		case 'l':
+		case 'L':
+			request_code = REQUEST_LIST_REGISTERED_USERS;
+			break;
+		case '3':
+		case 'm':
+		case 'M':
+			request_code = REQUEST_LOAD_MESSAGE;
+			break;
+		case '4':
+		case 'u':
+		case 'U':
+			request_code = REQUEST_LOAD_UNREAD_MESSAGES;
+			break;
+		case '5':
+		case 'd':
+		case 'D':
+			request_code = REQUEST_DELETE_MESSAGE;
+			break;
+		case 'q':
+		case 'Q':
+			running = 0;
+			continue;
+		default: // invalid choice
+			P("[%s] >>> Invalid choice", env.sender);
+			continue;
+		}
+
+		// Send request code to server
+		ssize_t sent = send(sockfd, &request_code, sizeof(request_code), 0);
+		if (unlikely(sent <= 0))
+		{
+			PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
+			break;
+		}
+		// Wait for server response
+		MESSAGE_CODE server_msg_code = MESSAGE_ERROR;
+		ssize_t recvd = recv(sockfd, &server_msg_code, sizeof(server_msg_code), MSG_WAITALL);
+		if (unlikely(recvd != sizeof(server_msg_code)))
+		{
+			PSE("[%s] >>> Failed to receive MESSAGE_CODE response (got %zd bytes)", env.sender, recvd);
+			break;
+		}
+		P("[%s] >>> Server MESSAGE_CODE response: %d", env.sender, server_msg_code);
+	}
+
+	/* -------------------------------------------------------------------------- */
+	/*                             END OF CLIENT LOOP                             */
+	/* -------------------------------------------------------------------------- */
+	close(sockfd);
+	P("Exiting program");
+	return(0);
 }
 
 /** @deprecated

@@ -1,3 +1,4 @@
+# Implementation details
 ### Message handling
 When authentication succeeds, the server thread dedicated to the client enters an infinite loop waiting for a `MESSAGE_CODE` value (enum in `3-Global-Variables-and-Functions.c`).  
 Unless otherwise stated, every request receives an `ERROR_CODE` reply before any further payload exchange.
