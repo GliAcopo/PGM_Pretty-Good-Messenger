@@ -23,6 +23,8 @@
 #include <ifaddrs.h>    // struct ifaddrs, getifaddrs, freeifaddrs
 #include <netdb.h>      // NI_MAXHOST, getnameinfo
 #include <sys/stat.h>   // stat, mkdir
+#include <semaphore.h>  // sem_t, sem_init, sem_timedwait, sem_post
+#include <time.h>       // clock_gettime
 // #include <linux/if_link.h> // IFLA_ADDRESS
 
 
@@ -31,6 +33,10 @@
 
 // Max number of pending connections in the socket listen queue
 #define MAX_BACKLOG 10
+
+static char *current_loggedin_users[MAX_BACKLOG] = {0};
+static unsigned int current_loggedin_users_bitmap = 0;
+static sem_t current_loggedin_users_semaphore;
 
 // ierror, an internal debug substitute to errno
 ERROR_CODE ierrno = NO_ERROR;
@@ -100,6 +106,154 @@ ERROR_CODE print_local_ip_addresses(uint16_t port)
     return NO_ERROR;
 }
 
+static void dump_loggedin_users(void)
+{
+    P("Logged in users bitmap: 0x%08X", current_loggedin_users_bitmap);
+    for (int i = 0; i < MAX_BACKLOG; i++)
+    {
+        if (current_loggedin_users[i] != NULL)
+        {
+            P("\t[%d]: %s", i, current_loggedin_users[i]);
+        }
+    }
+}
+
+static void lock_loggedin_users_or_exit(void)
+{
+    int attempts = 0;
+    while (attempts < MAX_AQUIRE_SEMAPHORE_RETRY)
+    {
+        struct timespec ts;
+        if (unlikely(clock_gettime(CLOCK_REALTIME, &ts) == -1))
+        {
+            PSE("clock_gettime() failed while locking loggedin users");
+#ifdef DEBUG
+            dump_loggedin_users();
+#endif
+            E();
+        }
+        ts.tv_sec += 5;
+
+        int rc;
+        do
+        {
+            rc = sem_timedwait(&current_loggedin_users_semaphore, &ts);
+        } while (rc == -1 && errno == EINTR);
+
+        if (rc == 0)
+        {
+            return;
+        }
+        if (errno == ETIMEDOUT)
+        {
+            attempts++;
+            P("Timed out waiting for current_loggedin_users_semaphore (%d/%d)", attempts, MAX_AQUIRE_SEMAPHORE_RETRY);
+            continue;
+        }
+        PSE("sem_timedwait() failed for current_loggedin_users_semaphore");
+        break;
+    }
+
+    P("Unable to acquire current_loggedin_users_semaphore, exiting");
+#ifdef DEBUG
+    dump_loggedin_users();
+#endif
+    E();
+}
+
+static void unlock_loggedin_users_or_exit(void)
+{
+    if (unlikely(sem_post(&current_loggedin_users_semaphore) == -1))
+    {
+        PSE("sem_post() failed for current_loggedin_users_semaphore");
+#ifdef DEBUG
+        dump_loggedin_users();
+#endif
+        E();
+    }
+}
+
+static ERROR_CODE add_loggedin_user(const char *username, int *out_index)
+{
+    if (unlikely(username == NULL || out_index == NULL))
+    {
+        return NULL_PARAMETERS;
+    }
+
+    lock_loggedin_users_or_exit();
+#ifdef DEBUG
+    P("current_loggedin_users_bitmap before login: 0x%08X", current_loggedin_users_bitmap);
+#endif
+    for (int i = 0; i < MAX_BACKLOG; i++)
+    {
+        if (current_loggedin_users[i] != NULL && strcmp(current_loggedin_users[i], username) == 0)
+        {
+            unlock_loggedin_users_or_exit();
+            return ERROR;
+        }
+    }
+
+    char *name_copy = calloc(USERNAME_SIZE_CHARS, sizeof(char));
+    if (unlikely(name_copy == NULL))
+    {
+        unlock_loggedin_users_or_exit();
+        return SYSCALL_ERROR;
+    }
+    snprintf(name_copy, USERNAME_SIZE_CHARS, "%s", username);
+
+    int slot = -1;
+    for (int i = 0; i < MAX_BACKLOG; i++)
+    {
+        if ((current_loggedin_users_bitmap & (1u << i)) == 0)
+        {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0)
+    {
+        free(name_copy);
+        P("No free slot in current_loggedin_users_bitmap");
+#ifdef DEBUG
+        dump_loggedin_users();
+#endif
+        E();
+    }
+
+    current_loggedin_users[slot] = name_copy;
+    current_loggedin_users_bitmap |= (1u << slot);
+    *out_index = slot;
+#ifdef DEBUG
+    P("current_loggedin_users_bitmap after login: 0x%08X", current_loggedin_users_bitmap);
+#endif
+    unlock_loggedin_users_or_exit();
+
+    return NO_ERROR;
+}
+
+static void remove_loggedin_user(int index)
+{
+    if (index < 0 || index >= MAX_BACKLOG)
+    {
+        return;
+    }
+
+    lock_loggedin_users_or_exit();
+#ifdef DEBUG
+    P("current_loggedin_users_bitmap before logout: 0x%08X", current_loggedin_users_bitmap);
+#endif
+    if (current_loggedin_users[index] != NULL)
+    {
+        free(current_loggedin_users[index]);
+        current_loggedin_users[index] = NULL;
+    }
+    current_loggedin_users_bitmap &= ~(1u << index);
+#ifdef DEBUG
+    P("current_loggedin_users_bitmap after logout: 0x%08X", current_loggedin_users_bitmap);
+#endif
+    unlock_loggedin_users_or_exit();
+}
+
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                          COONNECTION HANDLER (THREAD)                                         */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
@@ -117,6 +271,7 @@ void *thread_routine(void *arg)
     ERROR_CODE response_code = NO_ERROR;
     char stored_password[PASSWORD_SIZE_CHARS] = {0};
     char client_password[PASSWORD_SIZE_CHARS] = {0};
+    int current_loggedin_users_used_index = -1;
     char *user_dir_path = NULL;
     char *password_path = NULL;
     char *data_path = NULL;
@@ -258,6 +413,17 @@ void *thread_routine(void *arg)
         }
         fclose(data_file);
 
+        ERROR_CODE add_code = add_loggedin_user(login_env.sender, &current_loggedin_users_used_index);
+        if (unlikely(add_code != NO_ERROR))
+        {
+            response_code = add_code;
+            if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+            {
+                PSE("::: Failed to send registration rejection for [%s]", login_env.sender);
+            }
+            goto cleanup;
+        }
+
         response_code = NO_ERROR;
         if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
         {
@@ -307,6 +473,17 @@ void *thread_routine(void *arg)
 
             if (strcmp(client_password, stored_password) == 0)  // Passwords match case
             {
+                ERROR_CODE add_code = add_loggedin_user(login_env.sender, &current_loggedin_users_used_index);
+                if (unlikely(add_code != NO_ERROR))
+                {
+                    response_code = add_code;
+                    if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+                    {
+                        PSE("::: Failed to send login rejection to [%s]", login_env.sender);
+                    }
+                    goto cleanup;
+                }
+
                 authenticated = 1;
                 response_code = NO_ERROR;
                 P("[%d]::: User [%s] authenticated", connection_fd, login_env.sender);
@@ -341,6 +518,11 @@ void *thread_routine(void *arg)
     // @todo implement message sending and receiving here
 
 cleanup:
+    if (current_loggedin_users_used_index >= 0)
+    {
+        remove_loggedin_user(current_loggedin_users_used_index);
+        current_loggedin_users_used_index = -1;
+    }
     if (user_dir_path != NULL)
     {
         free(user_dir_path);
@@ -377,6 +559,12 @@ int main(int, char**) // Unused parameters argc argv
     printf("Printing ascii art and name\n");
     fprintf(stdout, "%s", ascii_art);
     fprintf(stdout, "Program name: %s\n", program_name);
+
+    if (unlikely(sem_init(&current_loggedin_users_semaphore, 0, 1) == -1))
+    {
+        PSE("sem_init() failed for current_loggedin_users_semaphore");
+        E();
+    }
 
     // START SOCKET SERVER HERE
     // Creating a socket for internet communication using domain:IPv4 ; type:TCP ; protocol: default(0) 

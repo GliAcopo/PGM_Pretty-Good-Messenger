@@ -28,6 +28,7 @@ Only the server stores the messages, since the professor said that I cannot assu
     - then the message contents themselves
 
 ### Message exchange between two or more users
+#### Logged in users management 
 - At the start of the Server application, three relevant values are initialized:
     - `char* current_loggedin_users`: array of dynamically allocated usernames of currently logged in users
     - `unsigned int current_loggedin_users_bitmap`: The occupation bitmap of the array (initialized at 0)
@@ -59,5 +60,8 @@ Upon closing the connection, the thread cleanup routine includes:
         - _DEBUG: Every action is printed_
 - Frees the `current_loggedin_users_used_index` entry number in the `current_loggedin_users` array.
 - Removes the entry from the `current_loggedin_users_bitmap`.
+
+Since this flow is a bit difficult to understand I have created a diagram:
+![Server_users_management](Server Login and Logout Flow.pdf)
 
 ### Signal handling
