@@ -12,6 +12,7 @@ When the authentication succeeds, the server thread dedicated to the client ente
     - reads the message lenght, fetches the message from the file, and sends it to the client.
         - (since the file names are standard ISO 8601: YYYYMMDDHHMMSS, file searching is simply "ordering a list of numbers from greater (latest) to lesser (oldest))
     - The client reconstructs the Message struct and adds it to the messages array of MESSAGE structs (the message body is dynamically allocated and the pointer is assigned to the `char *message` field in the `MESSAGE` struct).
+- `REQUEST_LOAD_UNREAD_MESSAGES`: @todo
 
 
 ### File and persistent storage
@@ -28,4 +29,35 @@ Only the server stores the messages, since the professor said that I cannot assu
 
 ### Message exchange between two or more users
 - At the start of the Server application, three relevant values are initialized:
-    - `current_loggedin_users`: array of 
+    - `char* current_loggedin_users`: array of dynamically allocated usernames of currently logged in users
+    - `unsigned int current_loggedin_users_bitmap`: The occupation bitmap of the array (initialized at 0)
+    - `sem_t current_loggedin_users_semaphore`: The semaphore for synchronizing thread access to these resources.
+    - Access to these resources always requires the semaphore, except for a debug-only dump on fatal errors.
+
+When a connection is estabilished with the server, and the user authenticates, the server threads handling the connection:
+- Enters a loop where it:
+    - Tries to aquire the lock on the `current_loggedin_users_semaphore` for 5 seconds. (The system call is also checked for erroneus exit upon receiving SIGNAL)
+    - If unable to, retries for up to `MAX_AQUIRE_SEMAPHORE_RETRY` (defined in `3-Global-Variables-and-Functions.h`).
+    - If unable to, terminates the entire application.
+        - _DEBUG: Every action is described and printed_
+- Checks whether the username is already present in `current_loggedin_users`. If it is, the login is rejected.
+- Allocates for the username of the logged in user (up to `USERNAME_SIZE_CHARS`) only after authentication succeeds.
+    - _DEBUG: allocation is checked and printed_
+- Checks the `current_loggedin_users_bitmap`, for an empty space. (That is, up until `MAX_BACKLOG` positions)
+    - If found, the position index in the array is **saved** into a local variable `current_loggedin_users_used_index`.
+        - _DEBUG: the bitmap is printed before and after the modification of the program_
+    - There should never be an occasion in wich a free position is not found, since the lenght of the array is exactly how many users can be logged in at a time (that is `MAX_BACKLOG`)
+        - _DEBUG: In that case, a DEBUG defined function `dump_loggedin_users()` gets called, said function prints the bitmap and the names of the loggedin users from the array (without aquiring semaphore) before closing the entire application_
+- Writes the pointer to the allocated space to the name in the found array position.
+- Restores `current_loggedin_users_semaphore` access.
+
+Upon closing the connection, the thread cleanup routine includes:
+- Enters a loop where it:
+    - Tries to aquire the lock on the `current_loggedin_users_semaphore` for 5 seconds. (The system call is also checked for erroneus exit upon receiving SIGNAL)
+    - If unable to, retries for up to `MAX_AQUIRE_SEMAPHORE_RETRY` (defined in `3-Global-Variables-and-Functions.h`).
+    - If unable to, terminates the entire application.
+        - _DEBUG: Every action is printed_
+- Frees the `current_loggedin_users_used_index` entry number in the `current_loggedin_users` array.
+- Removes the entry from the `current_loggedin_users_bitmap`.
+
+### Signal handling
