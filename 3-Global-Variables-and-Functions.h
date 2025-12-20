@@ -96,6 +96,7 @@ enum sizes_and_constants{
 
 extern const char *password_filename;
 extern const char *data_filename;
+extern const char *folder_suffix_user;
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              MESSAGE STRUCT AND METHODS                                       */

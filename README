@@ -16,7 +16,7 @@ When the authentication succeeds, the server thread dedicated to the client ente
 
 ### File and persistent storage
 Only the server stores the messages, since the professor said that I cannot assume that I have storage permissions on Client devices.
-- For every registered user, a folder with its name is created.
+- For every registered user, a folder with its name and `folder_suffix_user` is created.
 - The file named with the name specified in the `password_filename` variable contains the user password.
 - The file named with the name specified in the `data_filename` variable conains
     - First line: unsigned integer: number of messages received (currently in the folder)
@@ -26,8 +26,6 @@ Only the server stores the messages, since the professor said that I cannot assu
     - The first thing to be stored in the file is the MESSAGE struct
     - then the message contents themselves
 
-
-
-These codes are sent by the client to prepare both ends to send-receive data.
-
-If the 
+### Message exchange between two or more users
+- At the start of the Server application, three relevant values are initialized:
+    - `current_loggedin_users`: array of 

@@ -238,6 +238,7 @@ success:
 */
 
 const char *file_suffix_user_data = ".pgm"; // Suffix for message files
+const char *folder_suffix_user = ".pgmusr"; // Suffix for program user folders
 const char *password_filename = ".PASSWORD"; // File to store passwords
 const char *data_filename = ".DATA";         // File to store user data like number of messages sent, received, etc.
 const char *program_name = "PGM";

@@ -117,6 +117,7 @@ void *thread_routine(void *arg)
     ERROR_CODE response_code = NO_ERROR;
     char stored_password[PASSWORD_SIZE_CHARS] = {0};
     char client_password[PASSWORD_SIZE_CHARS] = {0};
+    char *user_dir_path = NULL;
     char *password_path = NULL;
     char *data_path = NULL;
 
@@ -135,8 +136,14 @@ void *thread_routine(void *arg)
     P("[%d]::: Read username [%s]", connection_fd, login_env.sender);
 
     //  2) Decide whether to register or authenticate
-    char user_dir_path[USERNAME_SIZE_CHARS] = {0};
-    if (unlikely(snprintf(user_dir_path, sizeof(user_dir_path), "%s", login_env.sender) < 0))
+    size_t user_dir_len = strlen(login_env.sender) + strlen(folder_suffix_user) + 1;
+    user_dir_path = calloc(user_dir_len, sizeof(char));
+    if (unlikely(user_dir_path == NULL))
+    {
+        PSE("::: Failed to allocate user directory path for username: %s", login_env.sender);
+        goto cleanup;
+    }
+    if (unlikely(snprintf(user_dir_path, user_dir_len, "%s%s", login_env.sender, folder_suffix_user) < 0))
     {
         PSE("::: Failed to build user directory path for username: %s", login_env.sender);
         goto cleanup;
@@ -334,6 +341,10 @@ void *thread_routine(void *arg)
     // @todo implement message sending and receiving here
 
 cleanup:
+    if (user_dir_path != NULL)
+    {
+        free(user_dir_path);
+    }
     if (password_path != NULL)
     {
         free(password_path);
