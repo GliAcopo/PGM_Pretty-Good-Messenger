@@ -47,7 +47,7 @@ const char *server_port_env = "PGM_SERVER_PORT";
 
 
 /**
- * Parse a decimal port string and return a validated port number.
+ * @brief Parse a decimal port string and return a validated port number.
  *
  * @param value    NUL-terminated string containing the port in base 10. If NULL or empty, the function returns @p fallback.
  * @param fallback Port to return when @p value is NULL/empty or invalid.
