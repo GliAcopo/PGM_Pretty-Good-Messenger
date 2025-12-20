@@ -343,7 +343,7 @@ void *thread_routine(void *arg)
 
     struct stat user_dir_stat = {0};
     int user_dir_missing = 0;
-    if (stat(user_dir_path, &user_dir_stat) == 0)
+    if (stat(user_dir_path, &user_dir_stat) == 0) // From the linux man: stat = Get file attributes for FILE and put the in BUFF
     {
         if (!S_ISDIR(user_dir_stat.st_mode))
         {
@@ -419,6 +419,7 @@ void *thread_routine(void *arg)
             PSE("::: Failed to create user folder for [%s]", login_env.sender);
             goto cleanup;
         }
+        P("[%d]::: Created user folder [%s] for [%s]", connection_fd, user_dir_path, login_env.sender);
 
         // Create password file and store password as the first line
         password_file = fopen(password_path, "w");
@@ -427,12 +428,14 @@ void *thread_routine(void *arg)
             PSE("::: Failed to create password file for [%s]", login_env.sender);
             goto cleanup;
         }
+        P("[%d]::: Created password file [%s] for [%s]", connection_fd, password_path, login_env.sender);
         if (unlikely(fprintf(password_file, "%s\n", client_password) < 0))
         {
             PSE("::: Failed to write password for new user [%s]", login_env.sender);
             fclose(password_file);
             goto cleanup;
         }
+        P("[%d]::: Stored password for new user [%s]", connection_fd, login_env.sender);
         fclose(password_file);
 
         // Create data file and initialize received message count
@@ -442,12 +445,14 @@ void *thread_routine(void *arg)
             PSE("::: Failed to create data file for [%s]", login_env.sender);
             goto cleanup;
         }
+        P("[%d]::: Created data file [%s] for [%s]", connection_fd, data_path, login_env.sender);
         if (unlikely(fprintf(data_file, "%u\n", 0u) < 0))
         {
             PSE("::: Failed to initialize data file for [%s]", login_env.sender);
             fclose(data_file);
             goto cleanup;
         }
+        P("[%d]::: Initialized data file [%s] for new user [%s]", connection_fd, data_path, login_env.sender);
         fclose(data_file);
 
         ERROR_CODE add_code = add_loggedin_user(login_env.sender, &current_loggedin_users_used_index);
@@ -630,8 +635,9 @@ int main(int argc, char** argv)
     address.sin_addr.s_addr = INADDR_ANY; // Accept connections from any IP address (“accept connections on whatever IPs this host currently has.”)
     if (port_number > 0 && port_number < 65536)
     {
-        address.sin_port = htonl(port_number); // htonl converts the port number from host byte order to network byte order (big endian)
+        address.sin_port = htons((uint16_t)port_number); // htonl converts the port number from host byte order to network byte order (big endian)
                                                // WARNING: before I used htons here, but it was a mistake since htons is for short (16 bit) and port numbers are 32 bit
+                                               // WARNING 2: actually I tried htonl but this caused the server to bind to unexpected ports??? So I guess that port numbers are 16 bit, but htons expects a uint16_t as input, so we cast it to uint16_t
         P("Using specified port: %d", port_number);
     }
     else
