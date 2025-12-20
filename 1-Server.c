@@ -557,7 +557,54 @@ void *thread_routine(void *arg)
     /*                          MESSAGE SENDING TO USERS                          */
     /* -------------------------------------------------------------------------- */
 
-    // @todo implement message sending and receiving here
+    while (1)
+    {
+        MESSAGE_CODE request_code = MESSAGE_ERROR;
+        ssize_t recvd;
+        do
+        {
+            recvd = recv(connection_fd, &request_code, sizeof(request_code), MSG_WAITALL);
+        } while (recvd < 0 && errno == EINTR);
+
+        if (recvd == 0)
+        {
+            P("[%d]::: Client disconnected", connection_fd);
+            break;
+        }
+        if (recvd < 0)
+        {
+            PSE("::: Failed to receive MESSAGE_CODE for [%s]", login_env.sender);
+            goto cleanup;
+        }
+        if (recvd != sizeof(request_code))
+        {
+            P("[%d]::: Incomplete MESSAGE_CODE received (%zd bytes)", connection_fd, recvd);
+            goto cleanup;
+        }
+
+        switch (request_code)
+        {
+        case REQUEST_SEND_MESSAGE:
+            P("[%d]::: REQUEST_SEND_MESSAGE received (not implemented)", connection_fd);
+            break;
+        case REQUEST_LIST_REGISTERED_USERS:
+            P("[%d]::: REQUEST_LIST_REGISTERED_USERS received (not implemented)", connection_fd);
+            break;
+        case REQUEST_LOAD_PREVIOUS_MESSAGES:
+            P("[%d]::: REQUEST_LOAD_PREVIOUS_MESSAGES received (not implemented)", connection_fd);
+            break;
+        default:
+            P("[%d]::: Unknown MESSAGE_CODE [%d]", connection_fd, request_code);
+            break;
+        }
+
+        MESSAGE_CODE response_code_msg = MESSAGE_ERROR;
+        if (unlikely(send(connection_fd, &response_code_msg, sizeof(response_code_msg), 0) <= 0))
+        {
+            PSE("::: Failed to send MESSAGE_ERROR to [%s]", login_env.sender);
+            goto cleanup;
+        }
+    }
 
 cleanup:
     if (current_loggedin_users_used_index >= 0)
@@ -636,8 +683,8 @@ int main(int argc, char** argv)
     if (port_number > 0 && port_number < 65536)
     {
         address.sin_port = htons((uint16_t)port_number); // htonl converts the port number from host byte order to network byte order (big endian)
-                                               // WARNING: before I used htons here, but it was a mistake since htons is for short (16 bit) and port numbers are 32 bit
-                                               // WARNING 2: actually I tried htonl but this caused the server to bind to unexpected ports??? So I guess that port numbers are 16 bit, but htons expects a uint16_t as input, so we cast it to uint16_t
+                                                         // WARNING: before I used htons here, but it was a mistake since htons is for short (16 bit) and port numbers are 32 bit
+                                                         // WARNING 2: actually I tried htonl but this caused the server to bind to unexpected ports??? So I guess that port numbers are 16 bit, but htons expects a uint16_t as input, so we cast it to uint16_t
         P("Using specified port: %d", port_number);
     }
     else
