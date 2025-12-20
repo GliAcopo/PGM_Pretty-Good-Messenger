@@ -2,13 +2,18 @@
 When authentication succeeds, the server thread dedicated to the client enters an infinite loop waiting for a `MESSAGE_CODE` value (enum in `3-Global-Variables-and-Functions.c`).  
 Unless otherwise stated, every request receives an `ERROR_CODE` reply before any further payload exchange.
 
+Note: unread messages are messages whose filename starts with the `UNREAD` flag
+Note: the message count .DATA message count is to be discontinued, is not useful as a feature.
+Note: When referring to "save the MESSAGE structure in the file" I mean that it is saved as WHOLE
+    - see `3-Global-Variables-and-Functions.h`->`MESSAGE STRUCT AND METHODS` for details.
+
 - `REQUEST_SEND_MESSAGE`:
     - Server receives a `MESSAGE` struct (with sender/recipient/length).
     - Server checks that the recipient folder exists.
         - If not found, reply with `USER_NOT_FOUND` and stop.
         - Otherwise reply with `NO_ERROR` and continue.
     - Server receives the message body (exactly `message_length` bytes).
-    - Server creates a message file in the recipient folder named `<YYYYMMDDHHMMSS><file_suffix_user_data>`. Opened "exclusively" to avoid data access race among threads.
+    - Server creates a message file in the recipient folder named `<YYYYMMDDHHMMSS><(num to avoid name clash)><file_suffix_user_data>`. Opened "exclusively" to avoid data access race among threads. ("num to avoid name clash" is used if a message is received in the same second, very unlikely but possible)
         - First bytes: serialized `MESSAGE` struct.
         - Then: raw message body.
         - File begins with an `UNREAD` marker (simple header line) to support unread loading.
@@ -16,12 +21,12 @@ Unless otherwise stated, every request receives an `ERROR_CODE` reply before any
     - Server scans the base folder and lists every folder ending with `folder_suffix_user`.
     - Server replies with a newline-separated list of usernames (suffix stripped), ending with `\n`.
 - `REQUEST_LOAD_MESSAGE`:
-    - Server lists user message files, sorts by filename (descending), sends the list of filenames to the Client divided by newlines.
+    - Server lists user message files, sorts by filename (only filenames in the directory, not the entire path) (descending), sends the list of filenames to the Client divided by newlines.
         - If list is to big @todo handle send of bigger data portions (is it even necessary?).
     - Server waits for `MESSAGE_CODE`
     - Client on his side prints to the user the sent list of filenames.
         - Client user chooses not to load any message.
-            - Client responds with `OPERATION_ABORTED`
+            - Client responds with `MESSAGE_OPERATION_ABORTED`
             - Server does nothing and restarts the loop
         - Client user chooses a message by writing the assigned number by the program listing.
             - Client responds to the server with `REQUEST_LOAD_SPECIFIC_MESSAGE`
@@ -32,9 +37,8 @@ Unless otherwise stated, every request receives an `ERROR_CODE` reply before any
                         - IF the message contained the `UNREAD` marker then it gets removed
                 - if not found server sends `MESSAGE_NOT_FOUND`
 - `REQUEST_LOAD_UNREAD_MESSAGES`:
-    - Server lists message files containing the `UNREAD` marker, in chronological order.
-    - For each unread message, server sends the stored `MESSAGE` struct and message body.
-    - After sending, server updates the marker removing the `UNREAD` header.
+    - Behaves exactly like the first part of `REQUEST_LOAD_MESSAGE`, but only lists `UNREAD` messages.
+    - After sending the list to the client, the loop restarts (no message sending is expected), that is because it is supposed to be used in conjuction with `REQUEST_LOAD_MESSAGE`.
 - `REQUEST_DELETE_MESSAGE`:
     - Works **exactly** as `REQUEST_LOAD_MESSAGE`, except for the fact that the selected message gets deleted.
         - if the deletion was a success then the server responds with `NO_ERROR`
