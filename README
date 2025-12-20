@@ -5,7 +5,10 @@ Unless otherwise stated, every request receives an `ERROR_CODE` reply before any
 Note: unread messages are messages whose filename starts with the `UNREAD` flag
 Note: the message count .DATA message count is to be discontinued, is not useful as a feature.
 Note: When referring to "save the MESSAGE structure in the file" I mean that it is saved as WHOLE
-    - see `3-Global-Variables-and-Functions.h`->`MESSAGE STRUCT AND METHODS` for details.
+- the structure contains a flexible array, so sizeof(MESSAGE) will not give the body of the message but only the first part of the structure.
+    - Use offsetof(MESSAGE, message) + message_length bytes.
+    - Do NOT use sizeof(MESSAGE).
+- see `3-Global-Variables-and-Functions.h`->`MESSAGE STRUCT AND METHODS` for details.
 
 - `REQUEST_SEND_MESSAGE`:
     - Server receives a `MESSAGE` struct (with sender/recipient/length).
@@ -16,12 +19,19 @@ Note: When referring to "save the MESSAGE structure in the file" I mean that it 
     - Server creates a message file in the recipient folder named `<YYYYMMDDHHMMSS><(num to avoid name clash)><file_suffix_user_data>`. Opened "exclusively" to avoid data access race among threads. ("num to avoid name clash" is used if a message is received in the same second, very unlikely but possible)
         - First bytes: serialized `MESSAGE` struct.
         - Then: raw message body.
-        - File begins with an `UNREAD` marker (simple header line) to support unread loading.
+        - NOTE: careful about network byte order
+        - File is marked as `UNREAD` (filename starts with `UNREAD` as said above)
 - `REQUEST_LIST_REGISTERED_USERS`:
-    - Server scans the base folder and lists every folder ending with `folder_suffix_user`.
-    - Server replies with a newline-separated list of usernames (suffix stripped), ending with `\n`.
+    - Server scans the server folder and lists every folder ending with `folder_suffix_user`, (that is the names of the registered users)
+    - Server replies with the number of bytes the communication will take.
+        - Client replies with `NO_ERROR`
+        - Else the operation gets aborted
+    - Server replies with a newline-separated list of usernames (suffix stripped), null-terminated `\0`.
 - `REQUEST_LOAD_MESSAGE`:
-    - Server lists user message files, sorts by filename (only filenames in the directory, not the entire path) (descending), sends the list of filenames to the Client divided by newlines.
+    - Server lists user message files, sorts by filename (only filenames in the directory, not the entire path) (descending), sends the list of filenames to the Client divided by newlines. Ends with null termination.
+    - Server replies with the number of bytes the communication will take.
+        - Client replies with `NO_ERROR`
+        - Else the operation gets aborted
         - If list is to big @todo handle send of bigger data portions (is it even necessary?).
     - Server waits for `MESSAGE_CODE`
     - Client on his side prints to the user the sent list of filenames.
@@ -34,7 +44,7 @@ Note: When referring to "save the MESSAGE structure in the file" I mean that it 
             - Server searches for message in the user folder
                 - if found, server responds with `NO_ERROR`
                     - Server sends message struct and message body
-                        - IF the message contained the `UNREAD` marker then it gets removed
+                        - IF the message is `UNREAD` then the `UNREAD` marker gets removed from the filename
                 - if not found server sends `MESSAGE_NOT_FOUND`
 - `REQUEST_LOAD_UNREAD_MESSAGES`:
     - Behaves exactly like the first part of `REQUEST_LOAD_MESSAGE`, but only lists `UNREAD` messages.
