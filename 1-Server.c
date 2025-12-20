@@ -45,6 +45,19 @@ ERROR_CODE ierrno = NO_ERROR;
 const int32_t DEFAULT_PORT_NUMBER = 6666; // log_2(65535) = 16 bits, 16-1= 15 (sign) so (to be sure) I decided to use a 32 bit 
 const char *server_port_env = "PGM_SERVER_PORT";
 
+
+/**
+ * Parse a decimal port string and return a validated port number.
+ *
+ * @param value    NUL-terminated string containing the port in base 10. If NULL or empty, the function returns @p fallback.
+ * @param fallback Port to return when @p value is NULL/empty or invalid.
+ * @param source   Short textual description used in diagnostic messages emitted via P(...).
+ * @return The parsed port number as an int32_t, or @p fallback on error.
+ *  - Calls strtol(value, &endptr, 10) with errno cleared beforehand.
+ *  - If parsing fails (entire string not consumed, out of range, or other error), emits a diagnostic and returns @p fallback.
+ *  - If the parsed port is in the privileged range (1..1023), returns 0
+ *  - Otherwise returns the parsed port as an int32_t
+ */
 static int32_t parse_port_string(const char *value, int32_t fallback, const char *source)
 {
     if (value == NULL || value[0] == '\0')
