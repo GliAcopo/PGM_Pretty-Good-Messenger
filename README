@@ -25,15 +25,18 @@ Note: When referring to "save the MESSAGE structure in the file" I mean that it 
         - First bytes: serialized `MESSAGE` struct.
         - NOTE: careful about network byte order
         - File is marked as `UNREAD` (filename starts with `UNREAD` as said above)
+    - For network/file protocols use a fixed-width type (e.g., `uint32_t`) and define byte order (usually network byte order).
+        - Sender: `uint32_t len_net = htonl((uint32_t)len);`
+        - Receiver: `len = ntohl(len_net);`
 - `REQUEST_LIST_REGISTERED_USERS`:
     - Server scans the server folder (current working directory) and lists every folder ending with `folder_suffix_user`, (that is the names of the registered users)
-    - Server replies with the number of bytes the communication will take.
+    - Server replies with the number of bytes the communication will take, then waits for `NO_ERROR`.
         - Client replies with `NO_ERROR`
         - Else the operation gets aborted
     - Server replies with a newline-separated list of usernames (suffix stripped), null-terminated `\0`.
 - `REQUEST_LOAD_MESSAGE`:
-    - Server lists user message files, sorts by filename (only filenames in the directory, not the entire path) (descending), sends the list of filenames to the Client divided by newlines. Ends with null termination.
-    - Server replies with the number of bytes the communication will take.
+    - Server lists user message files, sorts by filename (only filenames in the directory, not the entire path) (descending), and prepares the list of filenames divided by newlines. Ends with null termination.
+    - Server replies with the number of bytes the communication will take, then waits for `NO_ERROR` before sending the list.
         - Client replies with `NO_ERROR`
         - Else the operation gets aborted
         - If list is to big @todo handle send of bigger data portions (is it even necessary?).
