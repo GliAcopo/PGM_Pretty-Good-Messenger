@@ -23,8 +23,10 @@
 #include <ifaddrs.h>    // struct ifaddrs, getifaddrs, freeifaddrs
 #include <netdb.h>      // NI_MAXHOST, getnameinfo
 #include <sys/stat.h>   // stat, mkdir
+#include <dirent.h>     // opendir, readdir, closedir
 #include <semaphore.h>  // sem_t, sem_init, sem_timedwait, sem_post
 #include <time.h>       // clock_gettime
+#include <stdint.h>     // uint32_t
 // #include <linux/if_link.h> // IFLA_ADDRESS
 
 
@@ -289,6 +291,162 @@ static void remove_loggedin_user(int index)
     P("current_loggedin_users_bitmap after logout: 0x%08X", current_loggedin_users_bitmap);
 #endif
     unlock_loggedin_users_or_exit();
+}
+
+static int send_all(int fd, const void *buffer, size_t length)
+{
+    const char *cursor = buffer;
+    size_t remaining = length;
+    while (remaining > 0)
+    {
+        ssize_t sent = send(fd, cursor, remaining, 0);
+        if (sent < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return -1;
+        }
+        if (sent == 0)
+        {
+            return -1;
+        }
+        cursor += sent;
+        remaining -= (size_t)sent;
+    }
+    return 0;
+}
+
+static int recv_all(int fd, void *buffer, size_t length)
+{
+    char *cursor = buffer;
+    size_t remaining = length;
+    while (remaining > 0)
+    {
+        ssize_t recvd = recv(fd, cursor, remaining, 0);
+        if (recvd < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return -1;
+        }
+        if (recvd == 0)
+        {
+            return 0;
+        }
+        cursor += recvd;
+        remaining -= (size_t)recvd;
+    }
+    return 1;
+}
+
+static int ends_with(const char *value, const char *suffix)
+{
+    size_t value_len = strlen(value);
+    size_t suffix_len = strlen(suffix);
+    if (suffix_len > value_len)
+    {
+        return 0;
+    }
+    return strcmp(value + (value_len - suffix_len), suffix) == 0;
+}
+
+static char *build_registered_users_list(size_t *out_len)
+{
+    if (out_len == NULL)
+    {
+        return NULL;
+    }
+
+    DIR *dir = opendir(".");
+    if (dir == NULL)
+    {
+        return NULL;
+    }
+
+    size_t used = 0;
+    size_t cap = 0;
+    char *list = NULL;
+    struct dirent *entry = NULL;
+    size_t suffix_len = strlen(folder_suffix_user);
+
+    while ((entry = readdir(dir)) != NULL)
+    {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+        {
+            continue;
+        }
+
+        if (!ends_with(entry->d_name, folder_suffix_user))
+        {
+            continue;
+        }
+
+        struct stat st = {0};
+        if (stat(entry->d_name, &st) != 0)
+        {
+            continue;
+        }
+        if (!S_ISDIR(st.st_mode))
+        {
+            continue;
+        }
+
+        size_t name_len = strlen(entry->d_name) - suffix_len;
+        size_t needed = name_len + 1;
+        if (used + needed + 1 > cap)
+        {
+            size_t next_cap = cap == 0 ? 128 : cap * 2;
+            while (used + needed + 1 > next_cap)
+            {
+                next_cap *= 2;
+            }
+            char *new_list = realloc(list, next_cap);
+            if (new_list == NULL)
+            {
+                free(list);
+                closedir(dir);
+                return NULL;
+            }
+            list = new_list;
+            cap = next_cap;
+        }
+
+        memcpy(list + used, entry->d_name, name_len);
+        used += name_len;
+        list[used++] = '\n';
+    }
+
+    closedir(dir);
+
+    if (list == NULL)
+    {
+        list = malloc(1);
+        if (list == NULL)
+        {
+            return NULL;
+        }
+        list[0] = '\0';
+        *out_len = 1;
+        return list;
+    }
+
+    if (used + 1 > cap)
+    {
+        char *new_list = realloc(list, used + 1);
+        if (new_list == NULL)
+        {
+            free(list);
+            return NULL;
+        }
+        list = new_list;
+    }
+    list[used++] = '\0';
+    *out_len = used;
+    return list;
 }
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
@@ -582,39 +740,99 @@ void *thread_routine(void *arg)
             goto cleanup;
         }
 
+        int handled = 0;
         switch (request_code)
         {
         case REQUEST_SEND_MESSAGE:
             P("[%d]::: REQUEST_SEND_MESSAGE received (not implemented)", connection_fd);
+            handled = 1;
             break;
         case REQUEST_LIST_REGISTERED_USERS:
-            P("[%d]::: REQUEST_LIST_REGISTERED_USERS received (not implemented)", connection_fd);
+        {
+            P("[%d]::: REQUEST_LIST_REGISTERED_USERS received", connection_fd);
+            size_t list_len = 0;
+            char *list = build_registered_users_list(&list_len);
+            if (list == NULL)
+            {
+                PSE("::: Failed to build registered users list");
+                goto cleanup;
+            }
+            if (list_len > UINT32_MAX)
+            {
+                PSE("::: Registered users list too large");
+                free(list);
+                goto cleanup;
+            }
+            uint32_t list_len_net = htonl((uint32_t)list_len);
+            if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
+            {
+                PSE("::: Failed to send list length to [%s]", login_env.sender);
+                free(list);
+                goto cleanup;
+            }
+
+            ERROR_CODE ack = ERROR;
+            if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
+            {
+                PSE("::: Failed to receive list ack from [%s]", login_env.sender);
+                free(list);
+                goto cleanup;
+            }
+            if (ack != NO_ERROR)
+            {
+                P("[%d]::: Client aborted list users", connection_fd);
+                free(list);
+                handled = 1;
+                break;
+            }
+
+            if (unlikely(send_all(connection_fd, list, list_len) < 0))
+            {
+                PSE("::: Failed to send users list to [%s]", login_env.sender);
+                free(list);
+                goto cleanup;
+            }
+            free(list);
+            handled = 1;
             break;
+        }
         case REQUEST_LOAD_PREVIOUS_MESSAGES:
             P("[%d]::: REQUEST_LOAD_PREVIOUS_MESSAGES received (not implemented)", connection_fd);
+            handled = 1;
             break;
         case REQUEST_LOAD_MESSAGE:
             P("[%d]::: REQUEST_LOAD_MESSAGE received (not implemented)", connection_fd);
+            handled = 1;
             break;
         case REQUEST_LOAD_SPECIFIC_MESSAGE:
             P("[%d]::: REQUEST_LOAD_SPECIFIC_MESSAGE received (not implemented)", connection_fd);
+            handled = 1;
             break;
         case REQUEST_LOAD_UNREAD_MESSAGES:
             P("[%d]::: REQUEST_LOAD_UNREAD_MESSAGES received (not implemented)", connection_fd);
+            handled = 1;
             break;
         case REQUEST_DELETE_MESSAGE:
             P("[%d]::: REQUEST_DELETE_MESSAGE received (not implemented)", connection_fd);
+            handled = 1;
             break;
+        case LOGOUT:
+            P("[%d]::: LOGOUT received", connection_fd);
+            handled = 1;
+            goto cleanup;
         default:
             P("[%d]::: Unknown MESSAGE_CODE [%d]", connection_fd, request_code);
             break;
         }
 
-        MESSAGE_CODE response_code_msg = MESSAGE_ERROR;
-        if (unlikely(send(connection_fd, &response_code_msg, sizeof(response_code_msg), 0) <= 0))
+        if (!handled)
         {
-            PSE("::: Failed to send MESSAGE_ERROR to [%s]", login_env.sender);
-            goto cleanup;
+            MESSAGE_CODE response_code_msg = MESSAGE_ERROR;
+            if (unlikely(send(connection_fd, &response_code_msg, sizeof(response_code_msg), 0) <= 0))
+            {
+                PSE("::: Failed to send MESSAGE_ERROR to [%s]", login_env.sender);
+                goto cleanup;
+            }
         }
     }
 

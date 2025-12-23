@@ -25,12 +25,63 @@
 #include <ifaddrs.h>	// struct ifaddrs, getifaddrs, freeifaddrs
 #include <netdb.h>		// NI_MAXHOST, getnameinfo
 #include <linux/if_link.h> // IFLA_ADDRESS
+#include <stdint.h>	// uint32_t
 
 // SIMPLE PRINT STATEMENT ON STDOUT
 #define P(fmt, ...) do{fprintf(stdout,"[CL]>>> " fmt "\n", ##__VA_ARGS__);}while(0);
 
 // ierror, an internal debug substitute to errno
 ERROR_CODE ierrno = NO_ERROR;
+
+static int send_all(int fd, const void *buffer, size_t length)
+{
+	const char *cursor = buffer;
+	size_t remaining = length;
+	while (remaining > 0)
+	{
+		ssize_t sent = send(fd, cursor, remaining, 0);
+		if (sent < 0)
+		{
+			if (errno == EINTR)
+			{
+				continue;
+			}
+			return -1;
+		}
+		if (sent == 0)
+		{
+			return -1;
+		}
+		cursor += sent;
+		remaining -= (size_t)sent;
+	}
+	return 0;
+}
+
+static int recv_all(int fd, void *buffer, size_t length)
+{
+	char *cursor = buffer;
+	size_t remaining = length;
+	while (remaining > 0)
+	{
+		ssize_t recvd = recv(fd, cursor, remaining, 0);
+		if (recvd < 0)
+		{
+			if (errno == EINTR)
+			{
+				continue;
+			}
+			return -1;
+		}
+		if (recvd == 0)
+		{
+			return 0;
+		}
+		cursor += recvd;
+		remaining -= (size_t)recvd;
+	}
+	return 1;
+}
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              MESSAGE STRUCT CREATION                                          */
@@ -431,29 +482,90 @@ int main(int argc, char** argv)
 			break;
 		case 'q':
 		case 'Q':
-			running = 0;
-			continue;
+			request_code = LOGOUT;
+			break;
 		default: // invalid choice
 			P("[%s] >>> Invalid choice", env.sender);
 			continue;
 		}
 
-		// Send request code to server
-		ssize_t sent = send(sockfd, &request_code, sizeof(request_code), 0);
-		if (unlikely(sent <= 0))
+		switch (request_code)
 		{
-			PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
+		case REQUEST_LIST_REGISTERED_USERS:
+		{
+			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
+			{
+				PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
+				running = 0;
+				break;
+			}
+
+			uint32_t list_len_net = 0;
+			if (unlikely(recv_all(sockfd, &list_len_net, sizeof(list_len_net)) <= 0))
+			{
+				PSE("[%s] >>> Failed to receive users list length", env.sender);
+				running = 0;
+				break;
+			}
+			uint32_t list_len = ntohl(list_len_net);
+
+			ERROR_CODE ack = NO_ERROR;
+			if (unlikely(send_all(sockfd, &ack, sizeof(ack)) < 0))
+			{
+				PSE("[%s] >>> Failed to send list ack", env.sender);
+				running = 0;
+				break;
+			}
+
+			char *list = calloc(list_len == 0 ? 1 : list_len, sizeof(char));
+			if (unlikely(list == NULL))
+			{
+				PSE("[%s] >>> Failed to allocate users list buffer", env.sender);
+				running = 0;
+				break;
+			}
+			if (list_len > 0)
+			{
+				if (unlikely(recv_all(sockfd, list, list_len) <= 0))
+				{
+					PSE("[%s] >>> Failed to receive users list", env.sender);
+					free(list);
+					running = 0;
+					break;
+				}
+			}
+
+			printf("\nRegistered users:\n%s\n", list);
+			free(list);
 			break;
 		}
-		// Wait for server response
-		MESSAGE_CODE server_msg_code = MESSAGE_ERROR;
-		ssize_t recvd = recv(sockfd, &server_msg_code, sizeof(server_msg_code), MSG_WAITALL);
-		if (unlikely(recvd != sizeof(server_msg_code)))
+		case LOGOUT:
+			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
+			{
+				PSE("[%s] >>> Failed to send LOGOUT", env.sender);
+			}
+			running = 0;
+			break;
+		default:
 		{
-			PSE("[%s] >>> Failed to receive MESSAGE_CODE response (got %zd bytes)", env.sender, recvd);
+			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
+			{
+				PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
+				running = 0;
+				break;
+			}
+			MESSAGE_CODE server_msg_code = MESSAGE_ERROR;
+			ssize_t recvd = recv(sockfd, &server_msg_code, sizeof(server_msg_code), MSG_WAITALL);
+			if (unlikely(recvd != sizeof(server_msg_code)))
+			{
+				PSE("[%s] >>> Failed to receive MESSAGE_CODE response (got %zd bytes)", env.sender, recvd);
+				running = 0;
+				break;
+			}
+			P("[%s] >>> Server MESSAGE_CODE response: %d", env.sender, server_msg_code);
 			break;
 		}
-		P("[%s] >>> Server MESSAGE_CODE response: %d", env.sender, server_msg_code);
+		}
 	}
 
 	/* -------------------------------------------------------------------------- */
