@@ -130,11 +130,6 @@ Since this flow is a bit difficult to understand I have created a diagram:
 - After operations are completed, the function `activate_interrupts()` gets called and all the interrupts happened during that time get executed
 NOTE: if more than one thread calls for `deactivate_interrupts()` nothing bad should happen, but if a thread finishes what it has to do and calls for `activate_interrupts()` while others are doing things then there might be a problem, I need a way to reactivate interrupts only if all threads are finished doing important stuff.
 
-We will do as planned:
-1. Ignore SIGPIPE process-wide using static void ignore_sigpipe(void)
-2. If send_all() fails with EPIPE / ECONNRESET: client is gone → clean up and exit the thread.
-For other errors: log and clean up.
-
 I need to handle `SIGPIPE` for broken connections, and if that happens then the threads executes `cleanup`.
 (maybe such thing could be implemented only by having a `sig_atomic_t` variable `connection_lost`?)
 
