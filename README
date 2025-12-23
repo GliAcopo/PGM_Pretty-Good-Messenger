@@ -124,11 +124,33 @@ Upon closing the connection, the thread cleanup routine includes:
 Since this flow is a bit difficult to understand I have created a diagram:
 ![Server_users_management](Server Login and Logout Flow.pdf)
 
+---
+
 ### Signal handling
-@TO IMPLEMENT (todo)
+#### Server
+##### Threads
+- At the start, each thread sets as signal handler `int handler_server_thread(int signum)`
+
 - All interruption get masked before executing critical operations such as saving files. using the `deactivate_interrupts()` function
-- After operations are completed, the function `activate_interrupts()` gets called and all the interrupts happened during that time get executed
-NOTE: if more than one thread calls for `deactivate_interrupts()` nothing bad should happen, but if a thread finishes what it has to do and calls for `activate_interrupts()` while others are doing things then there might be a problem, I need a way to reactivate interrupts only if all threads are finished doing important stuff.
+- After operations are completed, the function `activate_interrupts()` gets called and all the interrupts happened during that time get served.
+    - NOTE: if more than one thread calls for `deactivate_interrupts()` nothing bad should happen, but if a thread finishes what it has to do and calls for `activate_interrupts()` while others are doing things then there might be a problem, I need a way to reactivate interrupts only if all threads are finished doing important stuff.
+        - The solution to this is found by simply considering that the interruptions are handled to the thread level, not globally.
+
+- If `SIGPIPE` is received, then the application terminates (for when the client abruptly disconnects)
+    - Basically no cleanup is needed, since all the "critical" actions are treated as "atomic" (Signal wise) since the signals are blocked during their execution and are only served when the application is ready, so we can just kill the application in any case.
+- If any signal is received, the application thread terminates.
+##### Main Thread
+- At the start, the server sets as its handler `int handler_server_main(int signum)`, for certain signals
+    - To propagate the signal to the other threads we can use the kill(0, SIGTERM) signal. (From the posix manual: "If pid equals 0, then sig is sent to every process in the process group of the calling process.")
+    - The server ignores child death signals (SIGCHLD, SIGCLD). 
+    - The server ignores SIGPIPE signals.
+    - If the server receives any other unmapped signal, then it propagates SIGTERM to all the threads before terminating itself.
+
+#### Client
+- The client handles signals through `int handler_client_main(int signum)`
+- SIGPIPE restarts the server access loop (asks IP again).
+- every other signal sends `LOGOUT` to the server and closes the client program.
+    - TO IMPLEMENT: The server has to accept at any given time phase the `LOGOUT` message. So that the client can disconnect whenever it wants.
 
 I need to handle `SIGPIPE` for broken connections, and if that happens then the threads executes `cleanup`.
 (maybe such thing could be implemented only by having a `sig_atomic_t` variable `connection_lost`?)
@@ -136,6 +158,7 @@ I need to handle `SIGPIPE` for broken connections, and if that happens then the 
 
 ## DEBUG
 ### Hold connection mode in the server
+@ NOT IMPLEMENTED
 A debug-only mode to keep authenticated connections open for manual testing (for example to verify duplicate-login rejection and concurrent users).  
 When enabled (proposed: `--hold` server argument or `PGM_HOLD_CONNECTION=1` env var), each authenticated thread enters a simple loop that blocks on the socket with a timeout, logs activity, and only exits on client disconnect or explicit stop.  
 No message handling is implemented in this mode yet; it only keeps the session alive.

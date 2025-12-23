@@ -1841,7 +1841,7 @@ int main(int argc, char** argv)
 
     // Now we accept connections in loop, each connection will be handled by a different thread
     int thread_args_connections[MAX_BACKLOG]; // A circular array containing the fds of the connections to pass to the thread
-    uint8_t thread_args_connections_index = 0;// The index of the array to keep track where to write
+    uint16_t thread_args_connections_index = 0;// The index of the array to keep track where to write
                                               // But won't the elements of the array be overwritten by the next connections?
                                               // No, since the size of the array is the size of the max backlog, so if an element is being overwritten then the thread assigned to that connetion had already closed said connection
     pthread_t thread_id_array[MAX_BACKLOG];   // The thread id array in which we store the thread ids
