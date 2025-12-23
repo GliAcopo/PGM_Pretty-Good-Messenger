@@ -851,6 +851,54 @@ int main(int argc, char** argv)
 			free(list);
 			break;
 		}
+		case REQUEST_LOAD_UNREAD_MESSAGES:
+		{
+			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
+			{
+				PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
+				running = 0;
+				break;
+			}
+
+			uint32_t list_len_net = 0;
+			if (unlikely(recv_all(sockfd, &list_len_net, sizeof(list_len_net)) <= 0))
+			{
+				PSE("[%s] >>> Failed to receive unread list length", env.sender);
+				running = 0;
+				break;
+			}
+			uint32_t list_len = ntohl(list_len_net);
+
+			ERROR_CODE ack = NO_ERROR;
+			if (unlikely(send_all(sockfd, &ack, sizeof(ack)) < 0))
+			{
+				PSE("[%s] >>> Failed to send unread list ack", env.sender);
+				running = 0;
+				break;
+			}
+
+			char *list = calloc(list_len == 0 ? 1 : list_len, sizeof(char));
+			if (unlikely(list == NULL))
+			{
+				PSE("[%s] >>> Failed to allocate unread list buffer", env.sender);
+				running = 0;
+				break;
+			}
+			if (list_len > 0)
+			{
+				if (unlikely(recv_all(sockfd, list, list_len) <= 0))
+				{
+					PSE("[%s] >>> Failed to receive unread list", env.sender);
+					free(list);
+					running = 0;
+					break;
+				}
+			}
+
+			printf("\nUnread messages:\n%s\n", list);
+			free(list);
+			break;
+		}
 		case LOGOUT:
 			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
 			{

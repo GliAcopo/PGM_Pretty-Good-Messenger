@@ -1470,9 +1470,82 @@ void *thread_routine(void *arg)
             handled = 1;
             break;
         case REQUEST_LOAD_UNREAD_MESSAGES:
-            P("[%d]::: REQUEST_LOAD_UNREAD_MESSAGES received (not implemented)", connection_fd);
+        {
+            P("[%d]::: REQUEST_LOAD_UNREAD_MESSAGES received", connection_fd);
+            size_t file_count = 0;
+            char **files = collect_message_files(user_dir_path, 1, &file_count);
+            char *list = NULL;
+            size_t list_len = 0;
+
+            if (file_count == 0)
+            {
+                list = malloc(1);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to allocate empty unread list");
+                    goto cleanup;
+                }
+                list[0] = '\0';
+                list_len = 1;
+            }
+            else
+            {
+                list = build_list_from_files(files, file_count, &list_len);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to build unread message list");
+                    free_message_files(files, file_count);
+                    goto cleanup;
+                }
+            }
+
+            if (list_len > UINT32_MAX)
+            {
+                PSE("::: Unread message list too large");
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            uint32_t list_len_net = htonl((uint32_t)list_len);
+            if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
+            {
+                PSE("::: Failed to send unread list length to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            ERROR_CODE ack = ERROR;
+            if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
+            {
+                PSE("::: Failed to receive unread list ack from [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+            if (ack != NO_ERROR)
+            {
+                P("[%d]::: Client aborted unread list", connection_fd);
+                free(list);
+                free_message_files(files, file_count);
+                handled = 1;
+                break;
+            }
+
+            if (unlikely(send_all(connection_fd, list, list_len) < 0))
+            {
+                PSE("::: Failed to send unread list to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            free(list);
+            free_message_files(files, file_count);
             handled = 1;
             break;
+        }
         case REQUEST_DELETE_MESSAGE:
             P("[%d]::: REQUEST_DELETE_MESSAGE received (not implemented)", connection_fd);
             handled = 1;
