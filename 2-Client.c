@@ -26,6 +26,7 @@
 #include <netdb.h>		// NI_MAXHOST, getnameinfo
 #include <linux/if_link.h> // IFLA_ADDRESS
 #include <stdint.h>	// uint32_t
+#include <stddef.h>	// offsetof
 
 // SIMPLE PRINT STATEMENT ON STDOUT
 #define P(fmt, ...) do{fprintf(stdout,"[CL]>>> " fmt "\n", ##__VA_ARGS__);}while(0);
@@ -491,6 +492,87 @@ int main(int argc, char** argv)
 
 		switch (request_code)
 		{
+		case REQUEST_SEND_MESSAGE:
+		{
+			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
+			{
+				PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
+				running = 0;
+				break;
+			}
+
+			char recipient[USERNAME_SIZE_CHARS] = {0};
+			printf("Insert recipient username:\n>");
+			fflush(stdout);
+			if (unlikely(fgets(recipient, sizeof(recipient), stdin) == NULL))
+			{
+				PSE("[%s] >>> Failed to read recipient", env.sender);
+				running = 0;
+				break;
+			}
+			recipient[strcspn(recipient, "\r\n")] = '\0';
+
+			char message_buf[MESSAGE_SIZE_CHARS + 1] = {0};
+			printf("Insert message body (max %u chars):\n>", MESSAGE_SIZE_CHARS);
+			fflush(stdout);
+			if (unlikely(fgets(message_buf, sizeof(message_buf), stdin) == NULL))
+			{
+				PSE("[%s] >>> Failed to read message body", env.sender);
+				running = 0;
+				break;
+			}
+			message_buf[strcspn(message_buf, "\r\n")] = '\0';
+
+			size_t header_size = offsetof(MESSAGE, message);
+			MESSAGE *header = calloc(1, header_size);
+			if (unlikely(header == NULL))
+			{
+				PSE("[%s] >>> Failed to allocate MESSAGE header", env.sender);
+				running = 0;
+				break;
+			}
+			snprintf(header->sender, sizeof(header->sender), "%s", env.sender);
+			snprintf(header->recipient, sizeof(header->recipient), "%s", recipient);
+			size_t body_len = strlen(message_buf);
+			header->message_length = htonl((uint32_t)body_len);
+
+			if (unlikely(send_all(sockfd, header, header_size) < 0))
+			{
+				PSE("[%s] >>> Failed to send MESSAGE header", env.sender);
+				free(header);
+				running = 0;
+				break;
+			}
+
+			ERROR_CODE server_code = ERROR;
+			if (unlikely(recv_all(sockfd, &server_code, sizeof(server_code)) <= 0))
+			{
+				PSE("[%s] >>> Failed to receive send-message response", env.sender);
+				free(header);
+				running = 0;
+				break;
+			}
+			if (server_code != NO_ERROR)
+			{
+				P("[%s] >>> Send message failed: %s", env.sender, convert_error_code_to_string(server_code));
+				free(header);
+				break;
+			}
+
+			if (body_len > 0)
+			{
+				if (unlikely(send_all(sockfd, message_buf, body_len) < 0))
+				{
+					PSE("[%s] >>> Failed to send message body", env.sender);
+					free(header);
+					running = 0;
+					break;
+				}
+			}
+			free(header);
+			P("[%s] >>> Message sent", env.sender);
+			break;
+		}
 		case REQUEST_LIST_REGISTERED_USERS:
 		{
 			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))

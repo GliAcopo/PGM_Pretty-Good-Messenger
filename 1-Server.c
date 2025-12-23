@@ -16,6 +16,7 @@
 #include <stdio.h>      // printf, fprintf
 #include <stdlib.h>     // exit, EXIT_FAILURE, EXIT_SUCCESS
 #include <unistd.h>     // close, access
+#include <fcntl.h>      // open
 #include <pthread.h>    // pthread_create, pthread_t, pthread_exit
 #include <sys/socket.h> // socket, bind, listen, accept
 #include <netinet/in.h> // struct sockaddr_in, INADDR_ANY
@@ -27,6 +28,7 @@
 #include <semaphore.h>  // sem_t, sem_init, sem_timedwait, sem_post
 #include <time.h>       // clock_gettime
 #include <stdint.h>     // uint32_t
+#include <stddef.h>     // offsetof
 // #include <linux/if_link.h> // IFLA_ADDRESS
 
 
@@ -449,6 +451,26 @@ static char *build_registered_users_list(size_t *out_len)
     return list;
 }
 
+static int sanitize_username(const char *value)
+{
+    if (value == NULL || value[0] == '\0')
+    {
+        return 0;
+    }
+    if (strstr(value, "..") != NULL)
+    {
+        return 0;
+    }
+    for (const char *cursor = value; *cursor != '\0'; cursor++)
+    {
+        if (*cursor == '/' || *cursor == '\\')
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                          COONNECTION HANDLER (THREAD)                                         */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
@@ -744,9 +766,193 @@ void *thread_routine(void *arg)
         switch (request_code)
         {
         case REQUEST_SEND_MESSAGE:
-            P("[%d]::: REQUEST_SEND_MESSAGE received (not implemented)", connection_fd);
+        {
+            P("[%d]::: REQUEST_SEND_MESSAGE received", connection_fd);
+
+            size_t header_size = offsetof(MESSAGE, message);
+            MESSAGE *header = calloc(1, header_size);
+            if (header == NULL)
+            {
+                PSE("::: Failed to allocate message header");
+                goto cleanup;
+            }
+            int header_recv = recv_all(connection_fd, header, header_size);
+            if (header_recv <= 0)
+            {
+                PSE("::: Failed to receive MESSAGE header for [%s]", login_env.sender);
+                free(header);
+                goto cleanup;
+            }
+
+            header->sender[USERNAME_SIZE_CHARS - 1] = '\0';
+            header->recipient[USERNAME_SIZE_CHARS - 1] = '\0';
+            header->sender[strcspn(header->sender, "\r\n")] = '\0';
+            header->recipient[strcspn(header->recipient, "\r\n")] = '\0';
+            snprintf(header->sender, sizeof(header->sender), "%s", login_env.sender);
+
+            uint32_t message_length = ntohl(header->message_length);
+            if (message_length == 0 || message_length > MESSAGE_SIZE_CHARS)
+            {
+                ERROR_CODE invalid = STRING_SIZE_INVALID;
+                if (unlikely(send_all(connection_fd, &invalid, sizeof(invalid)) < 0))
+                {
+                    PSE("::: Failed to send STRING_SIZE_INVALID to [%s]", login_env.sender);
+                }
+                free(header);
+                handled = 1;
+                break;
+            }
+
+            if (!sanitize_username(header->recipient))
+            {
+                ERROR_CODE not_found = USER_NOT_FOUND;
+                if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
+                {
+                    PSE("::: Failed to send USER_NOT_FOUND to [%s]", login_env.sender);
+                }
+                free(header);
+                handled = 1;
+                break;
+            }
+
+            size_t recipient_dir_len = strlen(header->recipient) + strlen(folder_suffix_user) + 1;
+            char *recipient_dir = calloc(recipient_dir_len, sizeof(char));
+            if (recipient_dir == NULL)
+            {
+                PSE("::: Failed to allocate recipient directory path for [%s]", header->recipient);
+                free(header);
+                handled = 1;
+                break;
+            }
+            if (unlikely(snprintf(recipient_dir, recipient_dir_len, "%s%s", header->recipient, folder_suffix_user) < 0))
+            {
+                PSE("::: Failed to build recipient directory path for [%s]", header->recipient);
+                free(recipient_dir);
+                free(header);
+                goto cleanup;
+            }
+
+            struct stat recipient_stat = {0};
+            if (stat(recipient_dir, &recipient_stat) != 0 || !S_ISDIR(recipient_stat.st_mode))
+            {
+                ERROR_CODE not_found = USER_NOT_FOUND;
+                if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
+                {
+                    PSE("::: Failed to send USER_NOT_FOUND to [%s]", login_env.sender);
+                }
+                free(recipient_dir);
+                free(header);
+                handled = 1;
+                break;
+            }
+
+            ERROR_CODE ok = NO_ERROR;
+            if (unlikely(send_all(connection_fd, &ok, sizeof(ok)) < 0))
+            {
+                PSE("::: Failed to send NO_ERROR to [%s]", login_env.sender);
+                free(recipient_dir);
+                free(header);
+                goto cleanup;
+            }
+
+            char *body = calloc(message_length, sizeof(char));
+            if (body == NULL)
+            {
+                PSE("::: Failed to allocate message body");
+                free(header);
+                goto cleanup;
+            }
+            int body_recv = recv_all(connection_fd, body, message_length);
+            if (body_recv <= 0)
+            {
+                PSE("::: Failed to receive MESSAGE body for [%s]", login_env.sender);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+
+            time_t now = time(NULL);
+            struct tm now_tm = {0};
+            if (localtime_r(&now, &now_tm) == NULL)
+            {
+                PSE("::: Failed to get local time");
+                free(recipient_dir);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+            char timestamp[16] = {0};
+            if (strftime(timestamp, sizeof(timestamp), "%Y%m%d%H%M%S", &now_tm) == 0)
+            {
+                PSE("::: Failed to format timestamp");
+                free(recipient_dir);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+
+            int msg_fd = -1;
+            char message_path[USERNAME_SIZE_CHARS + 64] = {0};
+            for (unsigned int counter = 0; counter < 1000; counter++)
+            {
+                if (counter == 0)
+                {
+                    snprintf(message_path, sizeof(message_path), "%s/UNREAD%s%s",
+                             recipient_dir, timestamp, file_suffix_user_data);
+                }
+                else
+                {
+                    snprintf(message_path, sizeof(message_path), "%s/UNREAD%s%u%s",
+                             recipient_dir, timestamp, counter, file_suffix_user_data);
+                }
+
+                msg_fd = open(message_path, O_CREAT | O_EXCL | O_WRONLY, 0600);
+                if (msg_fd >= 0)
+                {
+                    break;
+                }
+                if (errno != EEXIST)
+                {
+                    PSE("::: Failed to open message file for [%s]", header->recipient);
+                    break;
+                }
+            }
+
+            if (msg_fd < 0)
+            {
+                PSE("::: Unable to create message file for [%s]", header->recipient);
+                free(recipient_dir);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+
+            if (unlikely(write(msg_fd, header, header_size) != (ssize_t)header_size))
+            {
+                PSE("::: Failed to write message header to file");
+                close(msg_fd);
+                free(recipient_dir);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+            if (unlikely(write(msg_fd, body, message_length) != (ssize_t)message_length))
+            {
+                PSE("::: Failed to write message body to file");
+                close(msg_fd);
+                free(recipient_dir);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+            close(msg_fd);
+
+            free(recipient_dir);
+            free(body);
+            free(header);
             handled = 1;
             break;
+        }
         case REQUEST_LIST_REGISTERED_USERS:
         {
             P("[%d]::: REQUEST_LIST_REGISTERED_USERS received", connection_fd);
