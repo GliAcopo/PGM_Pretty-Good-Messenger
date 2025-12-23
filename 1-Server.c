@@ -356,6 +356,17 @@ static int ends_with(const char *value, const char *suffix)
     return strcmp(value + (value_len - suffix_len), suffix) == 0;
 }
 
+static int starts_with(const char *value, const char *prefix)
+{
+    size_t value_len = strlen(value);
+    size_t prefix_len = strlen(prefix);
+    if (prefix_len > value_len)
+    {
+        return 0;
+    }
+    return strncmp(value, prefix, prefix_len) == 0;
+}
+
 static char *build_registered_users_list(size_t *out_len)
 {
     if (out_len == NULL)
@@ -469,6 +480,220 @@ static int sanitize_username(const char *value)
         }
     }
     return 1;
+}
+
+static int compare_strings_desc(const void *a, const void *b)
+{
+    const char *sa = *(const char * const *)a;
+    const char *sb = *(const char * const *)b;
+    return strcmp(sb, sa);
+}
+
+static int sanitize_filename(const char *value)
+{
+    if (value == NULL || value[0] == '\0')
+    {
+        return 0;
+    }
+    if (strstr(value, "..") != NULL)
+    {
+        return 0;
+    }
+    for (const char *cursor = value; *cursor != '\0'; cursor++)
+    {
+        if (*cursor == '/' || *cursor == '\\')
+        {
+            return 0;
+        }
+    }
+    if (!ends_with(value, file_suffix_user_data))
+    {
+        return 0;
+    }
+    return 1;
+}
+
+static int recv_cstring(int fd, char *buffer, size_t max_len)
+{
+    if (buffer == NULL || max_len == 0)
+    {
+        return -1;
+    }
+    size_t used = 0;
+    while (used + 1 < max_len)
+    {
+        char ch = '\0';
+        ssize_t recvd = recv(fd, &ch, 1, 0);
+        if (recvd < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return -1;
+        }
+        if (recvd == 0)
+        {
+            return 0;
+        }
+        buffer[used++] = ch;
+        if (ch == '\0')
+        {
+            return 1;
+        }
+    }
+    buffer[max_len - 1] = '\0';
+    return -1;
+}
+
+static char **collect_message_files(const char *user_dir, int only_unread, size_t *out_count)
+{
+    if (out_count == NULL || user_dir == NULL)
+    {
+        return NULL;
+    }
+
+    DIR *dir = opendir(user_dir);
+    if (dir == NULL)
+    {
+        return NULL;
+    }
+
+    size_t count = 0;
+    size_t cap = 0;
+    char **files = NULL;
+    struct dirent *entry = NULL;
+
+    while ((entry = readdir(dir)) != NULL)
+    {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+        {
+            continue;
+        }
+        if (!ends_with(entry->d_name, file_suffix_user_data))
+        {
+            continue;
+        }
+        if (strcmp(entry->d_name, password_filename) == 0 || strcmp(entry->d_name, data_filename) == 0)
+        {
+            continue;
+        }
+        if (only_unread && !starts_with(entry->d_name, "UNREAD"))
+        {
+            continue;
+        }
+
+        size_t name_len = strlen(entry->d_name);
+        char *name_copy = malloc(name_len + 1);
+        if (name_copy == NULL)
+        {
+            continue;
+        }
+        memcpy(name_copy, entry->d_name, name_len + 1);
+
+        if (count + 1 > cap)
+        {
+            size_t next_cap = cap == 0 ? 16 : cap * 2;
+            char **new_files = realloc(files, next_cap * sizeof(char *));
+            if (new_files == NULL)
+            {
+                free(name_copy);
+                continue;
+            }
+            files = new_files;
+            cap = next_cap;
+        }
+        files[count++] = name_copy;
+    }
+
+    closedir(dir);
+
+    if (files == NULL)
+    {
+        *out_count = 0;
+        return NULL;
+    }
+
+    qsort(files, count, sizeof(char *), compare_strings_desc);
+
+    *out_count = count;
+    return files;
+}
+
+static void free_message_files(char **files, size_t count)
+{
+    if (files == NULL)
+    {
+        return;
+    }
+    for (size_t i = 0; i < count; i++)
+    {
+        free(files[i]);
+    }
+    free(files);
+}
+
+static char *build_list_from_files(char **files, size_t count, size_t *out_len)
+{
+    if (out_len == NULL)
+    {
+        return NULL;
+    }
+
+    size_t used = 0;
+    size_t cap = 0;
+    char *list = NULL;
+
+    for (size_t i = 0; i < count; i++)
+    {
+        size_t name_len = strlen(files[i]);
+        size_t needed = name_len + 1;
+        if (used + needed + 1 > cap)
+        {
+            size_t next_cap = cap == 0 ? 128 : cap * 2;
+            while (used + needed + 1 > next_cap)
+            {
+                next_cap *= 2;
+            }
+            char *new_list = realloc(list, next_cap);
+            if (new_list == NULL)
+            {
+                free(list);
+                return NULL;
+            }
+            list = new_list;
+            cap = next_cap;
+        }
+        memcpy(list + used, files[i], name_len);
+        used += name_len;
+        list[used++] = '\n';
+    }
+
+    if (list == NULL)
+    {
+        list = malloc(1);
+        if (list == NULL)
+        {
+            return NULL;
+        }
+        list[0] = '\0';
+        *out_len = 1;
+        return list;
+    }
+
+    if (used + 1 > cap)
+    {
+        char *new_list = realloc(list, used + 1);
+        if (new_list == NULL)
+        {
+            free(list);
+            return NULL;
+        }
+        list = new_list;
+    }
+    list[used++] = '\0';
+    *out_len = used;
+    return list;
 }
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
@@ -1007,9 +1232,239 @@ void *thread_routine(void *arg)
             handled = 1;
             break;
         case REQUEST_LOAD_MESSAGE:
-            P("[%d]::: REQUEST_LOAD_MESSAGE received (not implemented)", connection_fd);
+        {
+            P("[%d]::: REQUEST_LOAD_MESSAGE received", connection_fd);
+            size_t file_count = 0;
+            char **files = collect_message_files(user_dir_path, 0, &file_count);
+            char *list = NULL;
+            size_t list_len = 0;
+
+            if (file_count == 0)
+            {
+                list = malloc(1);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to allocate empty list");
+                    goto cleanup;
+                }
+                list[0] = '\0';
+                list_len = 1;
+            }
+            else
+            {
+                list = build_list_from_files(files, file_count, &list_len);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to build message list");
+                    free_message_files(files, file_count);
+                    goto cleanup;
+                }
+            }
+
+            if (list_len > UINT32_MAX)
+            {
+                PSE("::: Message list too large");
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            uint32_t list_len_net = htonl((uint32_t)list_len);
+            if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
+            {
+                PSE("::: Failed to send message list length to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            ERROR_CODE ack = ERROR;
+            if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
+            {
+                PSE("::: Failed to receive message list ack from [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+            if (ack != NO_ERROR)
+            {
+                P("[%d]::: Client aborted message list", connection_fd);
+                free(list);
+                free_message_files(files, file_count);
+                handled = 1;
+                break;
+            }
+
+            if (unlikely(send_all(connection_fd, list, list_len) < 0))
+            {
+                PSE("::: Failed to send message list to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+            free(list);
+            free_message_files(files, file_count);
+
+            MESSAGE_CODE next_code = MESSAGE_ERROR;
+            if (unlikely(recv_all(connection_fd, &next_code, sizeof(next_code)) <= 0))
+            {
+                PSE("::: Failed to receive message selection code from [%s]", login_env.sender);
+                goto cleanup;
+            }
+
+            if (next_code == MESSAGE_OPERATION_ABORTED)
+            {
+                P("[%d]::: Client aborted message load", connection_fd);
+                handled = 1;
+                break;
+            }
+            if (next_code != REQUEST_LOAD_SPECIFIC_MESSAGE)
+            {
+                P("[%d]::: Unexpected code after message list: %d", connection_fd, next_code);
+                handled = 1;
+                break;
+            }
+
+            char filename[512] = {0};
+            int filename_recv = recv_cstring(connection_fd, filename, sizeof(filename));
+            if (filename_recv <= 0)
+            {
+                PSE("::: Failed to receive message filename from [%s]", login_env.sender);
+                goto cleanup;
+            }
+
+            if (!sanitize_filename(filename))
+            {
+                MESSAGE_CODE not_found = MESSAGE_NOT_FOUND;
+                if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
+                {
+                    PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                }
+                handled = 1;
+                break;
+            }
+
+            size_t path_len = strlen(user_dir_path) + 1 + strlen(filename) + 1;
+            char *full_path = calloc(path_len, sizeof(char));
+            if (full_path == NULL)
+            {
+                PSE("::: Failed to allocate full path for message");
+                goto cleanup;
+            }
+            snprintf(full_path, path_len, "%s/%s", user_dir_path, filename);
+
+            int msg_fd = open(full_path, O_RDONLY);
+            if (msg_fd < 0)
+            {
+                MESSAGE_CODE not_found = MESSAGE_NOT_FOUND;
+                if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
+                {
+                    PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                }
+                free(full_path);
+                handled = 1;
+                break;
+            }
+
+            size_t header_size = offsetof(MESSAGE, message);
+            MESSAGE *header = calloc(1, header_size);
+            if (header == NULL)
+            {
+                PSE("::: Failed to allocate message header");
+                close(msg_fd);
+                free(full_path);
+                goto cleanup;
+            }
+            ssize_t header_read = read(msg_fd, header, header_size);
+            if (header_read != (ssize_t)header_size)
+            {
+                PSE("::: Failed to read message header");
+                close(msg_fd);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+
+            uint32_t body_len = ntohl(header->message_length);
+            if (body_len == 0 || body_len > MESSAGE_SIZE_CHARS)
+            {
+                PSE("::: Invalid message length in file");
+                close(msg_fd);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+
+            char *body = calloc(body_len, sizeof(char));
+            if (body == NULL)
+            {
+                PSE("::: Failed to allocate message body");
+                close(msg_fd);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+            ssize_t body_read = read(msg_fd, body, body_len);
+            if (body_read != (ssize_t)body_len)
+            {
+                PSE("::: Failed to read message body");
+                close(msg_fd);
+                free(body);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+            close(msg_fd);
+
+            ERROR_CODE ok = NO_ERROR;
+            if (unlikely(send_all(connection_fd, &ok, sizeof(ok)) < 0))
+            {
+                PSE("::: Failed to send NO_ERROR to [%s]", login_env.sender);
+                free(body);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+
+            if (unlikely(send_all(connection_fd, header, header_size) < 0))
+            {
+                PSE("::: Failed to send message header to [%s]", login_env.sender);
+                free(body);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+            if (unlikely(send_all(connection_fd, body, body_len) < 0))
+            {
+                PSE("::: Failed to send message body to [%s]", login_env.sender);
+                free(body);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+
+            if (starts_with(filename, "UNREAD"))
+            {
+                const char *new_name = filename + strlen("UNREAD");
+                if (new_name[0] != '\0')
+                {
+                    size_t new_path_len = strlen(user_dir_path) + 1 + strlen(new_name) + 1;
+                    char *new_path = calloc(new_path_len, sizeof(char));
+                    if (new_path != NULL)
+                    {
+                        snprintf(new_path, new_path_len, "%s/%s", user_dir_path, new_name);
+                        rename(full_path, new_path);
+                        free(new_path);
+                    }
+                }
+            }
+
+            free(body);
+            free(header);
+            free(full_path);
             handled = 1;
             break;
+        }
         case REQUEST_LOAD_SPECIFIC_MESSAGE:
             P("[%d]::: REQUEST_LOAD_SPECIFIC_MESSAGE received (not implemented)", connection_fd);
             handled = 1;

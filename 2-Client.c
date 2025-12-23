@@ -621,6 +621,236 @@ int main(int argc, char** argv)
 			free(list);
 			break;
 		}
+		case REQUEST_LOAD_MESSAGE:
+		{
+			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
+			{
+				PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
+				running = 0;
+				break;
+			}
+
+			uint32_t list_len_net = 0;
+			if (unlikely(recv_all(sockfd, &list_len_net, sizeof(list_len_net)) <= 0))
+			{
+				PSE("[%s] >>> Failed to receive message list length", env.sender);
+				running = 0;
+				break;
+			}
+			uint32_t list_len = ntohl(list_len_net);
+
+			ERROR_CODE ack = NO_ERROR;
+			if (unlikely(send_all(sockfd, &ack, sizeof(ack)) < 0))
+			{
+				PSE("[%s] >>> Failed to send message list ack", env.sender);
+				running = 0;
+				break;
+			}
+
+			char *list = calloc(list_len == 0 ? 1 : list_len, sizeof(char));
+			if (unlikely(list == NULL))
+			{
+				PSE("[%s] >>> Failed to allocate message list buffer", env.sender);
+				running = 0;
+				break;
+			}
+			if (list_len > 0)
+			{
+				if (unlikely(recv_all(sockfd, list, list_len) <= 0))
+				{
+					PSE("[%s] >>> Failed to receive message list", env.sender);
+					free(list);
+					running = 0;
+					break;
+				}
+			}
+
+			if (list[0] == '\0')
+			{
+				P("[%s] >>> No messages available", env.sender);
+				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
+				send_all(sockfd, &abort_code, sizeof(abort_code));
+				free(list);
+				break;
+			}
+
+			size_t entry_count = 0;
+			for (size_t i = 0; list[i] != '\0'; i++)
+			{
+				if (list[i] == '\n')
+				{
+					entry_count++;
+				}
+			}
+
+			char **entries = calloc(entry_count, sizeof(char *));
+			if (unlikely(entries == NULL))
+			{
+				PSE("[%s] >>> Failed to allocate entries array", env.sender);
+				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
+				send_all(sockfd, &abort_code, sizeof(abort_code));
+				free(list);
+				running = 0;
+				break;
+			}
+
+			size_t idx = 0;
+			char *cursor = list;
+			for (size_t i = 0; list[i] != '\0'; i++)
+			{
+				if (list[i] == '\n')
+				{
+					list[i] = '\0';
+					if (idx < entry_count)
+					{
+						entries[idx++] = cursor;
+					}
+					cursor = &list[i + 1];
+				}
+			}
+
+			printf("\nMessages:\n");
+			for (size_t i = 0; i < entry_count; i++)
+			{
+				printf("  [%zu] %s\n", i, entries[i]);
+			}
+			printf("Select message number or 'q' to cancel:\n>");
+			fflush(stdout);
+
+			char choice_line[32] = {0};
+			if (unlikely(fgets(choice_line, sizeof(choice_line), stdin) == NULL))
+			{
+				PSE("[%s] >>> Failed to read selection", env.sender);
+				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
+				send_all(sockfd, &abort_code, sizeof(abort_code));
+				free(entries);
+				free(list);
+				running = 0;
+				break;
+			}
+
+			if (choice_line[0] == 'q' || choice_line[0] == 'Q')
+			{
+				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
+				send_all(sockfd, &abort_code, sizeof(abort_code));
+				free(entries);
+				free(list);
+				break;
+			}
+
+			char *select_endptr = NULL;
+			long selection = strtol(choice_line, &select_endptr, 10);
+			if (select_endptr == choice_line || selection < 0 || (size_t)selection >= entry_count)
+			{
+				P("[%s] >>> Invalid selection", env.sender);
+				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
+				send_all(sockfd, &abort_code, sizeof(abort_code));
+				free(entries);
+				free(list);
+				break;
+			}
+
+			MESSAGE_CODE select_code = REQUEST_LOAD_SPECIFIC_MESSAGE;
+			if (unlikely(send_all(sockfd, &select_code, sizeof(select_code)) < 0))
+			{
+				PSE("[%s] >>> Failed to send REQUEST_LOAD_SPECIFIC_MESSAGE", env.sender);
+				free(entries);
+				free(list);
+				running = 0;
+				break;
+			}
+
+			const char *filename = entries[selection];
+			size_t filename_len = strlen(filename) + 1;
+			if (unlikely(send_all(sockfd, filename, filename_len) < 0))
+			{
+				PSE("[%s] >>> Failed to send filename", env.sender);
+				free(entries);
+				free(list);
+				running = 0;
+				break;
+			}
+
+			ERROR_CODE response = ERROR;
+			if (unlikely(recv_all(sockfd, &response, sizeof(response)) <= 0))
+			{
+				PSE("[%s] >>> Failed to receive load response", env.sender);
+				free(entries);
+				free(list);
+				running = 0;
+				break;
+			}
+			if (response != NO_ERROR)
+			{
+				P("[%s] >>> Load message failed: %d", env.sender, response);
+				free(entries);
+				free(list);
+				break;
+			}
+
+			size_t header_size = offsetof(MESSAGE, message);
+			MESSAGE *header = calloc(1, header_size);
+			if (unlikely(header == NULL))
+			{
+				PSE("[%s] >>> Failed to allocate MESSAGE header", env.sender);
+				free(entries);
+				free(list);
+				running = 0;
+				break;
+			}
+			if (unlikely(recv_all(sockfd, header, header_size) <= 0))
+			{
+				PSE("[%s] >>> Failed to receive MESSAGE header", env.sender);
+				free(header);
+				free(entries);
+				free(list);
+				running = 0;
+				break;
+			}
+
+			uint32_t body_len = ntohl(header->message_length);
+			if (body_len == 0 || body_len > MESSAGE_SIZE_CHARS)
+			{
+				P("[%s] >>> Invalid message length received", env.sender);
+				free(header);
+				free(entries);
+				free(list);
+				break;
+			}
+
+			char *body = calloc(body_len + 1, sizeof(char));
+			if (unlikely(body == NULL))
+			{
+				PSE("[%s] >>> Failed to allocate message body", env.sender);
+				free(header);
+				free(entries);
+				free(list);
+				running = 0;
+				break;
+			}
+			if (unlikely(recv_all(sockfd, body, body_len) <= 0))
+			{
+				PSE("[%s] >>> Failed to receive message body", env.sender);
+				free(body);
+				free(header);
+				free(entries);
+				free(list);
+				running = 0;
+				break;
+			}
+			body[body_len] = '\0';
+
+			printf("\nMessage loaded:\n");
+			printf("  From: %s\n", header->sender);
+			printf("  To: %s\n", header->recipient);
+			printf("  Body: %s\n", body);
+
+			free(body);
+			free(header);
+			free(entries);
+			free(list);
+			break;
+		}
 		case LOGOUT:
 			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
 			{
