@@ -84,6 +84,7 @@ typedef enum MESSAGE_CODE
     MESSAGE_ERROR = -1,
     MESSAGE_OPERATION_ABORTED = -2,
     MESSAGE_NOT_FOUND = -3,
+    LOGOUT = -4,
 } MESSAGE_CODE;
 
 extern const char *convert_error_code_to_string(const ERROR_CODE code);
