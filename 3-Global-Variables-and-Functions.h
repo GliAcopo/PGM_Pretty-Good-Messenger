@@ -14,6 +14,7 @@
 #include <stdio.h>  /* For stderr */
 #include <errno.h>  /* For errno */
 #include <string.h> /* For strerror */
+#include <stdint.h> /* For uint32_t */
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                           GLOBAL MACROS DEFINITIONS                                           */
@@ -84,6 +85,7 @@ typedef enum MESSAGE_CODE
     MESSAGE_ERROR = -1,
     MESSAGE_OPERATION_ABORTED = -2,
     MESSAGE_NOT_FOUND = -3,
+    LOGOUT = -4,
 } MESSAGE_CODE;
 
 extern const char *convert_error_code_to_string(const ERROR_CODE code);
@@ -104,6 +106,7 @@ enum sizes_and_constants{
 extern const char *password_filename;
 extern const char *data_filename;
 extern const char *folder_suffix_user;
+extern const char *file_suffix_user_data;
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              MESSAGE STRUCT AND METHODS                                       */
@@ -123,7 +126,7 @@ extern const char *folder_suffix_user;
 typedef struct MESSAGE {
     char sender[USERNAME_SIZE_CHARS];
     char recipient[USERNAME_SIZE_CHARS];
-    size_t message_length;
+    uint32_t message_length;
     char message[];
 } MESSAGE;
 

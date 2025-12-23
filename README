@@ -3,7 +3,7 @@
 When authentication succeeds, the server thread dedicated to the client enters an infinite loop waiting for a `MESSAGE_CODE` value (enum in `3-Global-Variables-and-Functions.c`).  
 Unless otherwise stated, every request receives an `ERROR_CODE` reply before any further payload exchange.
 
-Note: unread messages are messages whose filename starts with the `UNREAD` flag
+Note: unread messages are messages whose filename starts with the `UNREAD` flag: `UNREAD<YYYYMMDDHHMMSS><counter><file_suffix_user_data>`
 Note: the message count .DATA message count is to be discontinued, is not useful as a feature.
 Note: When referring to "save the MESSAGE structure in the file" I mean that it is saved as WHOLE
 - the structure contains a flexible array, so sizeof(MESSAGE) will not give the body of the message but only the first part of the structure.
@@ -12,32 +12,38 @@ Note: When referring to "save the MESSAGE structure in the file" I mean that it 
 - see `3-Global-Variables-and-Functions.h`->`MESSAGE STRUCT AND METHODS` for details.
 
 - `REQUEST_SEND_MESSAGE`:
-    - Server receives a `MESSAGE` struct (with sender/recipient/length).
+    - Server receives the `MESSAGE` header (read `offsetof(MESSAGE, message)` bytes, not `sizeof(MESSAGE)`).
     - Server checks that the recipient folder exists.
         - If not found, reply with `USER_NOT_FOUND` and stop.
         - Otherwise reply with `NO_ERROR` and continue.
+    - Server validates `message_length` from the header.
+        - If `message_length == 0` then the message is empty and the server responds with `ERROR_CODE` `STRING_SIZE_INVALID`.
+        - If `message_length > MESSAGE_SIZE_CHARS` then the message is invalid and the server responds with `ERROR_CODE` `STRING_SIZE_INVALID`.
     - Server receives the message body (exactly `message_length` bytes).
-    - Server creates a message file in the recipient folder named `<YYYYMMDDHHMMSS><(num to avoid name clash)><file_suffix_user_data>`. Opened "exclusively" to avoid data access race among threads. ("num to avoid name clash" is used if a message is received in the same second, very unlikely but possible)
+    - The server will always overwrite the `MESSAGE` `SENDER` field with the authenticated user. (Since that field is used by the receiver to know the sender), and this is why the Client can set that field to null anyway.
+    - Server creates a message file in the recipient folder named `<YYYYMMDDHHMMSS><(num to avoid name clash)><file_suffix_user_data>`. Opened "exclusively" to avoid data access race among threads. ("num to avoid name clash" is used if a message is received in the same second, very unlikely but possible, if the server is not able to open the file exclusively then this counter increates, so the server tries to open a differently named file).
         - First bytes: serialized `MESSAGE` struct.
-        - Then: raw message body.
         - NOTE: careful about network byte order
         - File is marked as `UNREAD` (filename starts with `UNREAD` as said above)
+    - For network/file protocols use a fixed-width type (e.g., `uint32_t`) and define byte order (usually network byte order).
+        - Sender: `uint32_t len_net = htonl((uint32_t)len);`
+        - Receiver: `len = ntohl(len_net);`
 - `REQUEST_LIST_REGISTERED_USERS`:
-    - Server scans the server folder and lists every folder ending with `folder_suffix_user`, (that is the names of the registered users)
-    - Server replies with the number of bytes the communication will take.
+    - Server scans the server folder (current working directory) and lists every folder ending with `folder_suffix_user`, (that is the names of the registered users)
+    - Server replies with a `uint32_t` length prefix in network byte order, then waits for `NO_ERROR`.
         - Client replies with `NO_ERROR`
         - Else the operation gets aborted
     - Server replies with a newline-separated list of usernames (suffix stripped), null-terminated `\0`.
 - `REQUEST_LOAD_MESSAGE`:
-    - Server lists user message files, sorts by filename (only filenames in the directory, not the entire path) (descending), sends the list of filenames to the Client divided by newlines. Ends with null termination.
-    - Server replies with the number of bytes the communication will take.
+    - Server lists user message files, sorts by filename (only filenames in the directory, not the entire path) (descending), and prepares the list of filenames divided by newlines. Ends with null termination.
+    - Server replies with a `uint32_t` length prefix in network byte order, then waits for `NO_ERROR` before sending the list.
         - Client replies with `NO_ERROR`
         - Else the operation gets aborted
         - If list is to big @todo handle send of bigger data portions (is it even necessary?).
     - Server waits for `MESSAGE_CODE`
     - Client on his side prints to the user the sent list of filenames.
         - Client user chooses not to load any message.
-            - Client responds with `MESSAGE_OPERATION_ABORTED`
+            - Client responds with `MESSAGE_OPERATION_ABORTED` from the `MESSAGE_CODE` enum in `3-Global-Variables-and-Functions.c`.
             - Server does nothing and restarts the loop
         - Client user chooses a message by writing the assigned number by the program listing.
             - Client responds to the server with `REQUEST_LOAD_SPECIFIC_MESSAGE`
