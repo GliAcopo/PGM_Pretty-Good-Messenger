@@ -225,11 +225,11 @@ int main(int argc, char** argv)
 			}
 		}
 		/* strip newline */
-		if (strlen(server_ip) == 0) {
-			/* default to local */
+		server_ip[strcspn(server_ip, "\n")] = '\0';
+		if (strlen(server_ip) == 0) { // default to local
+			P("[%s] >>> Defaulting to local server IP", env.sender);
 			snprintf(server_ip, sizeof(server_ip), "0.0.0.0");
 		}
-		server_ip[strcspn(server_ip, "\r\n")] = '\0';
 
 
 		// Ask for the server port for the user
@@ -248,11 +248,18 @@ int main(int argc, char** argv)
 				return(1);
 			}
 		}
-		
+		port_input[strcspn(port_input, "\n")] = '\0';
+		if (strlen(port_input) <= 0) // Newline was stripped from input (before was giving problems)
+		{ // default to 6666
+			snprintf(port_input, sizeof(port_input), "6666");
+			P("[%s] >>> Defaulting to port 6666", env.sender);
+		}
+		P("[%s] >>> Server port input: %s", env.sender, port_input);
+
 		char *endptr = NULL;
 		long port_long = strtol(port_input, &endptr, 10);
 		if (endptr == port_input || port_long <= 0 || port_long > 65535) {
-			P("[%s] >>> Invalid port number", env.sender);
+			P("[%s] >>> Invalid port number port_input:port_long[%s]:[%ld]", env.sender, port_input, port_long);
 			return(1);
 		}
 		const uint16_t SERVER_PORT = (uint16_t)port_long;
