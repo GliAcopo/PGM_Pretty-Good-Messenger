@@ -1547,9 +1547,143 @@ void *thread_routine(void *arg)
             break;
         }
         case REQUEST_DELETE_MESSAGE:
-            P("[%d]::: REQUEST_DELETE_MESSAGE received (not implemented)", connection_fd);
+        {
+            P("[%d]::: REQUEST_DELETE_MESSAGE received", connection_fd);
+            size_t file_count = 0;
+            char **files = collect_message_files(user_dir_path, 0, &file_count);
+            char *list = NULL;
+            size_t list_len = 0;
+
+            if (file_count == 0)
+            {
+                list = malloc(1);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to allocate empty delete list");
+                    goto cleanup;
+                }
+                list[0] = '\0';
+                list_len = 1;
+            }
+            else
+            {
+                list = build_list_from_files(files, file_count, &list_len);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to build delete message list");
+                    free_message_files(files, file_count);
+                    goto cleanup;
+                }
+            }
+
+            if (list_len > UINT32_MAX)
+            {
+                PSE("::: Delete message list too large");
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            uint32_t list_len_net = htonl((uint32_t)list_len);
+            if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
+            {
+                PSE("::: Failed to send delete list length to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            ERROR_CODE ack = ERROR;
+            if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
+            {
+                PSE("::: Failed to receive delete list ack from [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+            if (ack != NO_ERROR)
+            {
+                P("[%d]::: Client aborted delete list", connection_fd);
+                free(list);
+                free_message_files(files, file_count);
+                handled = 1;
+                break;
+            }
+
+            if (unlikely(send_all(connection_fd, list, list_len) < 0))
+            {
+                PSE("::: Failed to send delete list to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+            free(list);
+            free_message_files(files, file_count);
+
+            MESSAGE_CODE next_code = MESSAGE_ERROR;
+            if (unlikely(recv_all(connection_fd, &next_code, sizeof(next_code)) <= 0))
+            {
+                PSE("::: Failed to receive delete selection code from [%s]", login_env.sender);
+                goto cleanup;
+            }
+
+            if (next_code == MESSAGE_OPERATION_ABORTED)
+            {
+                P("[%d]::: Client aborted delete operation", connection_fd);
+                handled = 1;
+                break;
+            }
+            if (next_code != REQUEST_LOAD_SPECIFIC_MESSAGE)
+            {
+                P("[%d]::: Unexpected code after delete list: %d", connection_fd, next_code);
+                handled = 1;
+                break;
+            }
+
+            char filename[512] = {0};
+            int filename_recv = recv_cstring(connection_fd, filename, sizeof(filename));
+            if (filename_recv <= 0)
+            {
+                PSE("::: Failed to receive delete filename from [%s]", login_env.sender);
+                goto cleanup;
+            }
+
+            if (!sanitize_filename(filename))
+            {
+                MESSAGE_CODE not_found = MESSAGE_NOT_FOUND;
+                if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
+                {
+                    PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                }
+                handled = 1;
+                break;
+            }
+
+            size_t path_len = strlen(user_dir_path) + 1 + strlen(filename) + 1;
+            char *full_path = calloc(path_len, sizeof(char));
+            if (full_path == NULL)
+            {
+                PSE("::: Failed to allocate delete path");
+                goto cleanup;
+            }
+            snprintf(full_path, path_len, "%s/%s", user_dir_path, filename);
+
+            int delete_response = NO_ERROR;
+            if (unlink(full_path) != 0)
+            {
+                delete_response = MESSAGE_NOT_FOUND;
+            }
+            if (unlikely(send_all(connection_fd, &delete_response, sizeof(delete_response)) < 0))
+            {
+                PSE("::: Failed to send delete response to [%s]", login_env.sender);
+                free(full_path);
+                goto cleanup;
+            }
+
+            free(full_path);
             handled = 1;
             break;
+        }
         case LOGOUT:
             P("[%d]::: LOGOUT received", connection_fd);
             handled = 1;
