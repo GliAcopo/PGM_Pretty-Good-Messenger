@@ -136,24 +136,22 @@ Since this flow is a bit difficult to understand I have created a diagram:
     - NOTE: if more than one thread calls for `deactivate_interrupts()` nothing bad should happen, but if a thread finishes what it has to do and calls for `activate_interrupts()` while others are doing things then there might be a problem, I need a way to reactivate interrupts only if all threads are finished doing important stuff.
         - The solution to this is found by simply considering that the interruptions are handled to the thread level, not globally.
 
-- If `SIGPIPE` is received, then the application terminates (for when the client abruptly disconnects)
-    - Basically no cleanup is needed, since all the "critical" actions are treated as "atomic" (Signal wise) since the signals are blocked during their execution and are only served when the application is ready, so we can just kill the application in any case.
-- If any signal is received, the application thread terminates.
+- `SIGPIPE` is ignored process-wide with `ignore_sigpipe()` (so we never kill the server due to a broken pipe).
+- If `send_all()` fails with `EPIPE` or `ECONNRESET`, the client is gone: log it, clean up, and terminate the thread.
+    - In cases like `REQUEST_SEND_MESSAGE`, if a disconnect happens around file I/O, remove any partially written file before exiting.
+- For other errors/signals: log and clean up before terminating the thread.
 ##### Main Thread
 - At the start, the server sets as its handler `int handler_server_main(int signum)`, for certain signals
     - To propagate the signal to the other threads we can use the kill(0, SIGTERM) signal. (From the posix manual: "If pid equals 0, then sig is sent to every process in the process group of the calling process.")
     - The server ignores child death signals (SIGCHLD, SIGCLD). 
-    - The server ignores SIGPIPE signals.
-    - If the server receives any other unmapped signal, then it propagates SIGTERM to all the threads before terminating itself.
+    - The server ignores SIGPIPE signals (via `ignore_sigpipe()` called in main).
+    - If the server receives any other unmapped signal, then it terminates all the other threads before terminating itself.
 
 #### Client
 - The client handles signals through `int handler_client_main(int signum)`
 - SIGPIPE restarts the server access loop (asks IP again).
 - every other signal sends `LOGOUT` to the server and closes the client program.
     - TO IMPLEMENT: The server has to accept at any given time phase the `LOGOUT` message. So that the client can disconnect whenever it wants.
-
-I need to handle `SIGPIPE` for broken connections, and if that happens then the threads executes `cleanup`.
-(maybe such thing could be implemented only by having a `sig_atomic_t` variable `connection_lost`?)
 
 
 ## DEBUG
