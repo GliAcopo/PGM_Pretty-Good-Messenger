@@ -16,6 +16,7 @@
 #include <stdio.h>      // printf, fprintf
 #include <stdlib.h>     // exit, EXIT_FAILURE, EXIT_SUCCESS
 #include <unistd.h>     // close, access
+#include <fcntl.h>      // open
 #include <pthread.h>    // pthread_create, pthread_t, pthread_exit
 #include <sys/socket.h> // socket, bind, listen, accept
 #include <netinet/in.h> // struct sockaddr_in, INADDR_ANY
@@ -23,6 +24,11 @@
 #include <ifaddrs.h>    // struct ifaddrs, getifaddrs, freeifaddrs
 #include <netdb.h>      // NI_MAXHOST, getnameinfo
 #include <sys/stat.h>   // stat, mkdir
+#include <dirent.h>     // opendir, readdir, closedir
+#include <semaphore.h>  // sem_t, sem_init, sem_timedwait, sem_post
+#include <time.h>       // clock_gettime
+#include <stdint.h>     // uint32_t
+#include <stddef.h>     // offsetof
 // #include <linux/if_link.h> // IFLA_ADDRESS
 
 
@@ -32,11 +38,52 @@
 // Max number of pending connections in the socket listen queue
 #define MAX_BACKLOG 10
 
+static char *current_loggedin_users[MAX_BACKLOG] = {0};
+static unsigned int current_loggedin_users_bitmap = 0;
+static sem_t current_loggedin_users_semaphore;
+
 // ierror, an internal debug substitute to errno
 ERROR_CODE ierrno = NO_ERROR;
 
-// port number to use in the server, if -1 or > 65535 then an ephemeral is used instead
-const int32_t PORT_NUMBER = 666; // log_2(65535) = 16 bits, 16-1= 15 (sign) so (to be sure) I decided to use a 32 bit 
+// Default port to use in the server (can be overridden by argv or PGM_SERVER_PORT)
+const int32_t DEFAULT_PORT_NUMBER = 6666; // log_2(65535) = 16 bits, 16-1= 15 (sign) so (to be sure) I decided to use a 32 bit 
+const char *server_port_env = "PGM_SERVER_PORT";
+
+
+/**
+ * @brief Parse a decimal port string and return a validated port number.
+ *
+ * @param value    NUL-terminated string containing the port in base 10. If NULL or empty, the function returns @p fallback.
+ * @param fallback Port to return when @p value is NULL/empty or invalid.
+ * @param source   Short textual description used in diagnostic messages emitted via P(...).
+ * @return The parsed port number as an int32_t, or @p fallback on error.
+ *  - Calls strtol(value, &endptr, 10) with errno cleared beforehand.
+ *  - If parsing fails (entire string not consumed, out of range, or other error), emits a diagnostic and returns @p fallback.
+ *  - If the parsed port is in the privileged range (1..1023), returns 0
+ *  - Otherwise returns the parsed port as an int32_t
+ */
+static int32_t parse_port_string(const char *value, int32_t fallback, const char *source)
+{
+    if (value == NULL || value[0] == '\0')
+    {
+        return fallback;
+    }
+
+    char *endptr = NULL;
+    errno = 0;
+    long port_long = strtol(value, &endptr, 10);
+    if (endptr == value || *endptr != '\0' || errno != 0 || port_long < 0 || port_long > 65535)
+    {
+        P("Invalid %s port value [%s], using %d", source, value, fallback);
+        return fallback;
+    }
+    if (port_long > 0 && port_long < 1024)
+    {
+        P("Port %ld from %s requires elevated privileges, using ephemeral port", port_long, source);
+        return 0;
+    }
+    return (int32_t)port_long;
+}
 
 /**
  * @brief Prints all the local IP addresses of the machine
@@ -100,6 +147,555 @@ ERROR_CODE print_local_ip_addresses(uint16_t port)
     return NO_ERROR;
 }
 
+static void dump_loggedin_users(void)
+{
+    P("Logged in users bitmap: 0x%08X", current_loggedin_users_bitmap);
+    for (int i = 0; i < MAX_BACKLOG; i++)
+    {
+        if (current_loggedin_users[i] != NULL)
+        {
+            P("\t[%d]: %s", i, current_loggedin_users[i]);
+        }
+    }
+}
+
+static void lock_loggedin_users_or_exit(void)
+{
+    int attempts = 0;
+    while (attempts < MAX_AQUIRE_SEMAPHORE_RETRY)
+    {
+        struct timespec ts;
+        if (unlikely(clock_gettime(CLOCK_REALTIME, &ts) == -1))
+        {
+            PSE("clock_gettime() failed while locking loggedin users");
+#ifdef DEBUG
+            dump_loggedin_users();
+#endif
+            E();
+        }
+        ts.tv_sec += 5;
+
+        int rc;
+        do
+        {
+            rc = sem_timedwait(&current_loggedin_users_semaphore, &ts);
+        } while (rc == -1 && errno == EINTR);
+
+        if (rc == 0)
+        {
+            return;
+        }
+        if (errno == ETIMEDOUT)
+        {
+            attempts++;
+            P("Timed out waiting for current_loggedin_users_semaphore (%d/%d)", attempts, MAX_AQUIRE_SEMAPHORE_RETRY);
+            continue;
+        }
+        PSE("sem_timedwait() failed for current_loggedin_users_semaphore");
+        break;
+    }
+
+    P("Unable to acquire current_loggedin_users_semaphore, exiting");
+#ifdef DEBUG
+    dump_loggedin_users();
+#endif
+    E();
+}
+
+static void unlock_loggedin_users_or_exit(void)
+{
+    if (unlikely(sem_post(&current_loggedin_users_semaphore) == -1))
+    {
+        PSE("sem_post() failed for current_loggedin_users_semaphore");
+#ifdef DEBUG
+        dump_loggedin_users();
+#endif
+        E();
+    }
+}
+
+static ERROR_CODE add_loggedin_user(const char *username, int *out_index)
+{
+    if (unlikely(username == NULL || out_index == NULL))
+    {
+        return NULL_PARAMETERS;
+    }
+
+    lock_loggedin_users_or_exit();
+#ifdef DEBUG
+    P("current_loggedin_users_bitmap before login: 0x%08X", current_loggedin_users_bitmap);
+#endif
+    for (int i = 0; i < MAX_BACKLOG; i++)
+    {
+        if (current_loggedin_users[i] != NULL && strcmp(current_loggedin_users[i], username) == 0)
+        {
+            unlock_loggedin_users_or_exit();
+            return ERROR;
+        }
+    }
+
+    char *name_copy = calloc(USERNAME_SIZE_CHARS, sizeof(char));
+    if (unlikely(name_copy == NULL))
+    {
+        unlock_loggedin_users_or_exit();
+        return SYSCALL_ERROR;
+    }
+    snprintf(name_copy, USERNAME_SIZE_CHARS, "%s", username);
+
+    int slot = -1;
+    for (int i = 0; i < MAX_BACKLOG; i++)
+    {
+        if ((current_loggedin_users_bitmap & (1u << i)) == 0)
+        {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0)
+    {
+        free(name_copy);
+        P("No free slot in current_loggedin_users_bitmap");
+#ifdef DEBUG
+        dump_loggedin_users();
+#endif
+        E();
+    }
+
+    current_loggedin_users[slot] = name_copy;
+    current_loggedin_users_bitmap |= (1u << slot);
+    *out_index = slot;
+#ifdef DEBUG
+    P("current_loggedin_users_bitmap after login: 0x%08X", current_loggedin_users_bitmap);
+#endif
+    unlock_loggedin_users_or_exit();
+
+    return NO_ERROR;
+}
+
+static void remove_loggedin_user(int index)
+{
+    if (index < 0 || index >= MAX_BACKLOG)
+    {
+        return;
+    }
+
+    lock_loggedin_users_or_exit();
+#ifdef DEBUG
+    P("current_loggedin_users_bitmap before logout: 0x%08X", current_loggedin_users_bitmap);
+#endif
+    if (current_loggedin_users[index] != NULL)
+    {
+        free(current_loggedin_users[index]);
+        current_loggedin_users[index] = NULL;
+    }
+    current_loggedin_users_bitmap &= ~(1u << index);
+#ifdef DEBUG
+    P("current_loggedin_users_bitmap after logout: 0x%08X", current_loggedin_users_bitmap);
+#endif
+    unlock_loggedin_users_or_exit();
+}
+
+static int send_all(int fd, const void *buffer, size_t length)
+{
+    const char *cursor = buffer;
+    size_t remaining = length;
+    while (remaining > 0)
+    {
+        ssize_t sent = send(fd, cursor, remaining, 0);
+        if (sent < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return -1;
+        }
+        if (sent == 0)
+        {
+            return -1;
+        }
+        cursor += sent;
+        remaining -= (size_t)sent;
+    }
+    return 0;
+}
+
+static int recv_all(int fd, void *buffer, size_t length)
+{
+    char *cursor = buffer;
+    size_t remaining = length;
+    while (remaining > 0)
+    {
+        ssize_t recvd = recv(fd, cursor, remaining, 0);
+        if (recvd < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return -1;
+        }
+        if (recvd == 0)
+        {
+            return 0;
+        }
+        cursor += recvd;
+        remaining -= (size_t)recvd;
+    }
+    return 1;
+}
+
+static int ends_with(const char *value, const char *suffix)
+{
+    size_t value_len = strlen(value);
+    size_t suffix_len = strlen(suffix);
+    if (suffix_len > value_len)
+    {
+        return 0;
+    }
+    return strcmp(value + (value_len - suffix_len), suffix) == 0;
+}
+
+static int starts_with(const char *value, const char *prefix)
+{
+    size_t value_len = strlen(value);
+    size_t prefix_len = strlen(prefix);
+    if (prefix_len > value_len)
+    {
+        return 0;
+    }
+    return strncmp(value, prefix, prefix_len) == 0;
+}
+
+static char *build_registered_users_list(size_t *out_len)
+{
+    if (out_len == NULL)
+    {
+        return NULL;
+    }
+
+    DIR *dir = opendir(".");
+    if (dir == NULL)
+    {
+        return NULL;
+    }
+
+    size_t used = 0;
+    size_t cap = 0;
+    char *list = NULL;
+    struct dirent *entry = NULL;
+    size_t suffix_len = strlen(folder_suffix_user);
+
+    while ((entry = readdir(dir)) != NULL)
+    {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+        {
+            continue;
+        }
+
+        if (!ends_with(entry->d_name, folder_suffix_user))
+        {
+            continue;
+        }
+
+        struct stat st = {0};
+        if (stat(entry->d_name, &st) != 0)
+        {
+            continue;
+        }
+        if (!S_ISDIR(st.st_mode))
+        {
+            continue;
+        }
+
+        size_t name_len = strlen(entry->d_name) - suffix_len;
+        size_t needed = name_len + 1;
+        if (used + needed + 1 > cap)
+        {
+            size_t next_cap = cap == 0 ? 128 : cap * 2;
+            while (used + needed + 1 > next_cap)
+            {
+                next_cap *= 2;
+            }
+            char *new_list = realloc(list, next_cap);
+            if (new_list == NULL)
+            {
+                free(list);
+                closedir(dir);
+                return NULL;
+            }
+            list = new_list;
+            cap = next_cap;
+        }
+
+        memcpy(list + used, entry->d_name, name_len);
+        used += name_len;
+        list[used++] = '\n';
+    }
+
+    closedir(dir);
+
+    if (list == NULL)
+    {
+        list = malloc(1);
+        if (list == NULL)
+        {
+            return NULL;
+        }
+        list[0] = '\0';
+        *out_len = 1;
+        return list;
+    }
+
+    if (used + 1 > cap)
+    {
+        char *new_list = realloc(list, used + 1);
+        if (new_list == NULL)
+        {
+            free(list);
+            return NULL;
+        }
+        list = new_list;
+    }
+    list[used++] = '\0';
+    *out_len = used;
+    return list;
+}
+
+static int sanitize_username(const char *value)
+{
+    if (value == NULL || value[0] == '\0')
+    {
+        return 0;
+    }
+    if (strstr(value, "..") != NULL)
+    {
+        return 0;
+    }
+    for (const char *cursor = value; *cursor != '\0'; cursor++)
+    {
+        if (*cursor == '/' || *cursor == '\\')
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int compare_strings_desc(const void *a, const void *b)
+{
+    const char *sa = *(const char * const *)a;
+    const char *sb = *(const char * const *)b;
+    return strcmp(sb, sa);
+}
+
+static int sanitize_filename(const char *value)
+{
+    if (value == NULL || value[0] == '\0')
+    {
+        return 0;
+    }
+    if (strstr(value, "..") != NULL)
+    {
+        return 0;
+    }
+    for (const char *cursor = value; *cursor != '\0'; cursor++)
+    {
+        if (*cursor == '/' || *cursor == '\\')
+        {
+            return 0;
+        }
+    }
+    if (!ends_with(value, file_suffix_user_data))
+    {
+        return 0;
+    }
+    return 1;
+}
+
+static int recv_cstring(int fd, char *buffer, size_t max_len)
+{
+    if (buffer == NULL || max_len == 0)
+    {
+        return -1;
+    }
+    size_t used = 0;
+    while (used + 1 < max_len)
+    {
+        char ch = '\0';
+        ssize_t recvd = recv(fd, &ch, 1, 0);
+        if (recvd < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return -1;
+        }
+        if (recvd == 0)
+        {
+            return 0;
+        }
+        buffer[used++] = ch;
+        if (ch == '\0')
+        {
+            return 1;
+        }
+    }
+    buffer[max_len - 1] = '\0';
+    return -1;
+}
+
+static char **collect_message_files(const char *user_dir, int only_unread, size_t *out_count)
+{
+    if (out_count == NULL || user_dir == NULL)
+    {
+        return NULL;
+    }
+
+    DIR *dir = opendir(user_dir);
+    if (dir == NULL)
+    {
+        return NULL;
+    }
+
+    size_t count = 0;
+    size_t cap = 0;
+    char **files = NULL;
+    struct dirent *entry = NULL;
+
+    while ((entry = readdir(dir)) != NULL)
+    {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+        {
+            continue;
+        }
+        if (!ends_with(entry->d_name, file_suffix_user_data))
+        {
+            continue;
+        }
+        if (strcmp(entry->d_name, password_filename) == 0 || strcmp(entry->d_name, data_filename) == 0)
+        {
+            continue;
+        }
+        if (only_unread && !starts_with(entry->d_name, "UNREAD"))
+        {
+            continue;
+        }
+
+        size_t name_len = strlen(entry->d_name);
+        char *name_copy = malloc(name_len + 1);
+        if (name_copy == NULL)
+        {
+            continue;
+        }
+        memcpy(name_copy, entry->d_name, name_len + 1);
+
+        if (count + 1 > cap)
+        {
+            size_t next_cap = cap == 0 ? 16 : cap * 2;
+            char **new_files = realloc(files, next_cap * sizeof(char *));
+            if (new_files == NULL)
+            {
+                free(name_copy);
+                continue;
+            }
+            files = new_files;
+            cap = next_cap;
+        }
+        files[count++] = name_copy;
+    }
+
+    closedir(dir);
+
+    if (files == NULL)
+    {
+        *out_count = 0;
+        return NULL;
+    }
+
+    qsort(files, count, sizeof(char *), compare_strings_desc);
+
+    *out_count = count;
+    return files;
+}
+
+static void free_message_files(char **files, size_t count)
+{
+    if (files == NULL)
+    {
+        return;
+    }
+    for (size_t i = 0; i < count; i++)
+    {
+        free(files[i]);
+    }
+    free(files);
+}
+
+static char *build_list_from_files(char **files, size_t count, size_t *out_len)
+{
+    if (out_len == NULL)
+    {
+        return NULL;
+    }
+
+    size_t used = 0;
+    size_t cap = 0;
+    char *list = NULL;
+
+    for (size_t i = 0; i < count; i++)
+    {
+        size_t name_len = strlen(files[i]);
+        size_t needed = name_len + 1;
+        if (used + needed + 1 > cap)
+        {
+            size_t next_cap = cap == 0 ? 128 : cap * 2;
+            while (used + needed + 1 > next_cap)
+            {
+                next_cap *= 2;
+            }
+            char *new_list = realloc(list, next_cap);
+            if (new_list == NULL)
+            {
+                free(list);
+                return NULL;
+            }
+            list = new_list;
+            cap = next_cap;
+        }
+        memcpy(list + used, files[i], name_len);
+        used += name_len;
+        list[used++] = '\n';
+    }
+
+    if (list == NULL)
+    {
+        list = malloc(1);
+        if (list == NULL)
+        {
+            return NULL;
+        }
+        list[0] = '\0';
+        *out_len = 1;
+        return list;
+    }
+
+    if (used + 1 > cap)
+    {
+        char *new_list = realloc(list, used + 1);
+        if (new_list == NULL)
+        {
+            free(list);
+            return NULL;
+        }
+        list = new_list;
+    }
+    list[used++] = '\0';
+    *out_len = used;
+    return list;
+}
+
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                          COONNECTION HANDLER (THREAD)                                         */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
@@ -117,6 +713,8 @@ void *thread_routine(void *arg)
     ERROR_CODE response_code = NO_ERROR;
     char stored_password[PASSWORD_SIZE_CHARS] = {0};
     char client_password[PASSWORD_SIZE_CHARS] = {0};
+    int current_loggedin_users_used_index = -1;
+    char *user_dir_path = NULL;
     char *password_path = NULL;
     char *data_path = NULL;
 
@@ -135,8 +733,14 @@ void *thread_routine(void *arg)
     P("[%d]::: Read username [%s]", connection_fd, login_env.sender);
 
     //  2) Decide whether to register or authenticate
-    char user_dir_path[USERNAME_SIZE_CHARS] = {0};
-    if (unlikely(snprintf(user_dir_path, sizeof(user_dir_path), "%s", login_env.sender) < 0))
+    size_t user_dir_len = strlen(login_env.sender) + strlen(folder_suffix_user) + 1;
+    user_dir_path = calloc(user_dir_len, sizeof(char));
+    if (unlikely(user_dir_path == NULL))
+    {
+        PSE("::: Failed to allocate user directory path for username: %s", login_env.sender);
+        goto cleanup;
+    }
+    if (unlikely(snprintf(user_dir_path, user_dir_len, "%s%s", login_env.sender, folder_suffix_user) < 0))
     {
         PSE("::: Failed to build user directory path for username: %s", login_env.sender);
         goto cleanup;
@@ -144,7 +748,7 @@ void *thread_routine(void *arg)
 
     struct stat user_dir_stat = {0};
     int user_dir_missing = 0;
-    if (stat(user_dir_path, &user_dir_stat) == 0)
+    if (stat(user_dir_path, &user_dir_stat) == 0) // From the linux man: stat = Get file attributes for FILE and put the in BUFF
     {
         if (!S_ISDIR(user_dir_stat.st_mode))
         {
@@ -220,6 +824,7 @@ void *thread_routine(void *arg)
             PSE("::: Failed to create user folder for [%s]", login_env.sender);
             goto cleanup;
         }
+        P("[%d]::: Created user folder [%s] for [%s]", connection_fd, user_dir_path, login_env.sender);
 
         // Create password file and store password as the first line
         password_file = fopen(password_path, "w");
@@ -228,12 +833,14 @@ void *thread_routine(void *arg)
             PSE("::: Failed to create password file for [%s]", login_env.sender);
             goto cleanup;
         }
+        P("[%d]::: Created password file [%s] for [%s]", connection_fd, password_path, login_env.sender);
         if (unlikely(fprintf(password_file, "%s\n", client_password) < 0))
         {
             PSE("::: Failed to write password for new user [%s]", login_env.sender);
             fclose(password_file);
             goto cleanup;
         }
+        P("[%d]::: Stored password for new user [%s]", connection_fd, login_env.sender);
         fclose(password_file);
 
         // Create data file and initialize received message count
@@ -243,13 +850,26 @@ void *thread_routine(void *arg)
             PSE("::: Failed to create data file for [%s]", login_env.sender);
             goto cleanup;
         }
+        P("[%d]::: Created data file [%s] for [%s]", connection_fd, data_path, login_env.sender);
         if (unlikely(fprintf(data_file, "%u\n", 0u) < 0))
         {
             PSE("::: Failed to initialize data file for [%s]", login_env.sender);
             fclose(data_file);
             goto cleanup;
         }
+        P("[%d]::: Initialized data file [%s] for new user [%s]", connection_fd, data_path, login_env.sender);
         fclose(data_file);
+
+        ERROR_CODE add_code = add_loggedin_user(login_env.sender, &current_loggedin_users_used_index);
+        if (unlikely(add_code != NO_ERROR))
+        {
+            response_code = add_code;
+            if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+            {
+                PSE("::: Failed to send registration rejection for [%s]", login_env.sender);
+            }
+            goto cleanup;
+        }
 
         response_code = NO_ERROR;
         if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
@@ -300,6 +920,17 @@ void *thread_routine(void *arg)
 
             if (strcmp(client_password, stored_password) == 0)  // Passwords match case
             {
+                ERROR_CODE add_code = add_loggedin_user(login_env.sender, &current_loggedin_users_used_index);
+                if (unlikely(add_code != NO_ERROR))
+                {
+                    response_code = add_code;
+                    if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+                    {
+                        PSE("::: Failed to send login rejection to [%s]", login_env.sender);
+                    }
+                    goto cleanup;
+                }
+
                 authenticated = 1;
                 response_code = NO_ERROR;
                 P("[%d]::: User [%s] authenticated", connection_fd, login_env.sender);
@@ -331,9 +962,758 @@ void *thread_routine(void *arg)
     /*                          MESSAGE SENDING TO USERS                          */
     /* -------------------------------------------------------------------------- */
 
-    // @todo implement message sending and receiving here
+    while (1)
+    {
+        MESSAGE_CODE request_code = MESSAGE_ERROR;
+        ssize_t recvd;
+        do
+        {
+            recvd = recv(connection_fd, &request_code, sizeof(request_code), MSG_WAITALL);
+        } while (recvd < 0 && errno == EINTR);
+
+        if (recvd == 0)
+        {
+            P("[%d]::: Client disconnected", connection_fd);
+            break;
+        }
+        if (recvd < 0)
+        {
+            PSE("::: Failed to receive MESSAGE_CODE for [%s]", login_env.sender);
+            goto cleanup;
+        }
+        if (recvd != sizeof(request_code))
+        {
+            P("[%d]::: Incomplete MESSAGE_CODE received (%zd bytes)", connection_fd, recvd);
+            goto cleanup;
+        }
+
+        int handled = 0;
+        switch (request_code)
+        {
+        case REQUEST_SEND_MESSAGE:
+        {
+            P("[%d]::: REQUEST_SEND_MESSAGE received", connection_fd);
+
+            size_t header_size = offsetof(MESSAGE, message);
+            MESSAGE *header = calloc(1, header_size);
+            if (header == NULL)
+            {
+                PSE("::: Failed to allocate message header");
+                goto cleanup;
+            }
+            int header_recv = recv_all(connection_fd, header, header_size);
+            if (header_recv <= 0)
+            {
+                PSE("::: Failed to receive MESSAGE header for [%s]", login_env.sender);
+                free(header);
+                goto cleanup;
+            }
+
+            header->sender[USERNAME_SIZE_CHARS - 1] = '\0';
+            header->recipient[USERNAME_SIZE_CHARS - 1] = '\0';
+            header->sender[strcspn(header->sender, "\r\n")] = '\0';
+            header->recipient[strcspn(header->recipient, "\r\n")] = '\0';
+            snprintf(header->sender, sizeof(header->sender), "%s", login_env.sender);
+
+            uint32_t message_length = ntohl(header->message_length);
+            if (message_length == 0 || message_length > MESSAGE_SIZE_CHARS)
+            {
+                ERROR_CODE invalid = STRING_SIZE_INVALID;
+                if (unlikely(send_all(connection_fd, &invalid, sizeof(invalid)) < 0))
+                {
+                    PSE("::: Failed to send STRING_SIZE_INVALID to [%s]", login_env.sender);
+                }
+                free(header);
+                handled = 1;
+                break;
+            }
+
+            if (!sanitize_username(header->recipient))
+            {
+                ERROR_CODE not_found = USER_NOT_FOUND;
+                if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
+                {
+                    PSE("::: Failed to send USER_NOT_FOUND to [%s]", login_env.sender);
+                }
+                free(header);
+                handled = 1;
+                break;
+            }
+
+            size_t recipient_dir_len = strlen(header->recipient) + strlen(folder_suffix_user) + 1;
+            char *recipient_dir = calloc(recipient_dir_len, sizeof(char));
+            if (recipient_dir == NULL)
+            {
+                PSE("::: Failed to allocate recipient directory path for [%s]", header->recipient);
+                free(header);
+                handled = 1;
+                break;
+            }
+            if (unlikely(snprintf(recipient_dir, recipient_dir_len, "%s%s", header->recipient, folder_suffix_user) < 0))
+            {
+                PSE("::: Failed to build recipient directory path for [%s]", header->recipient);
+                free(recipient_dir);
+                free(header);
+                goto cleanup;
+            }
+
+            struct stat recipient_stat = {0};
+            if (stat(recipient_dir, &recipient_stat) != 0 || !S_ISDIR(recipient_stat.st_mode))
+            {
+                ERROR_CODE not_found = USER_NOT_FOUND;
+                if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
+                {
+                    PSE("::: Failed to send USER_NOT_FOUND to [%s]", login_env.sender);
+                }
+                free(recipient_dir);
+                free(header);
+                handled = 1;
+                break;
+            }
+
+            ERROR_CODE ok = NO_ERROR;
+            if (unlikely(send_all(connection_fd, &ok, sizeof(ok)) < 0))
+            {
+                PSE("::: Failed to send NO_ERROR to [%s]", login_env.sender);
+                free(recipient_dir);
+                free(header);
+                goto cleanup;
+            }
+
+            char *body = calloc(message_length, sizeof(char));
+            if (body == NULL)
+            {
+                PSE("::: Failed to allocate message body");
+                free(header);
+                goto cleanup;
+            }
+            int body_recv = recv_all(connection_fd, body, message_length);
+            if (body_recv <= 0)
+            {
+                PSE("::: Failed to receive MESSAGE body for [%s]", login_env.sender);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+
+            time_t now = time(NULL);
+            struct tm now_tm = {0};
+            if (localtime_r(&now, &now_tm) == NULL)
+            {
+                PSE("::: Failed to get local time");
+                free(recipient_dir);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+            char timestamp[16] = {0};
+            if (strftime(timestamp, sizeof(timestamp), "%Y%m%d%H%M%S", &now_tm) == 0)
+            {
+                PSE("::: Failed to format timestamp");
+                free(recipient_dir);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+
+            int msg_fd = -1;
+            char message_path[USERNAME_SIZE_CHARS + 64] = {0};
+            for (unsigned int counter = 0; counter < 1000; counter++)
+            {
+                if (counter == 0)
+                {
+                    snprintf(message_path, sizeof(message_path), "%s/UNREAD%s%s",
+                             recipient_dir, timestamp, file_suffix_user_data);
+                }
+                else
+                {
+                    snprintf(message_path, sizeof(message_path), "%s/UNREAD%s%u%s",
+                             recipient_dir, timestamp, counter, file_suffix_user_data);
+                }
+
+                msg_fd = open(message_path, O_CREAT | O_EXCL | O_WRONLY, 0600);
+                if (msg_fd >= 0)
+                {
+                    break;
+                }
+                if (errno != EEXIST)
+                {
+                    PSE("::: Failed to open message file for [%s]", header->recipient);
+                    break;
+                }
+            }
+
+            if (msg_fd < 0)
+            {
+                PSE("::: Unable to create message file for [%s]", header->recipient);
+                free(recipient_dir);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+
+            if (unlikely(write(msg_fd, header, header_size) != (ssize_t)header_size))
+            {
+                PSE("::: Failed to write message header to file");
+                close(msg_fd);
+                free(recipient_dir);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+            if (unlikely(write(msg_fd, body, message_length) != (ssize_t)message_length))
+            {
+                PSE("::: Failed to write message body to file");
+                close(msg_fd);
+                free(recipient_dir);
+                free(body);
+                free(header);
+                goto cleanup;
+            }
+            close(msg_fd);
+
+            free(recipient_dir);
+            free(body);
+            free(header);
+            handled = 1;
+            break;
+        }
+        case REQUEST_LIST_REGISTERED_USERS:
+        {
+            P("[%d]::: REQUEST_LIST_REGISTERED_USERS received", connection_fd);
+            size_t list_len = 0;
+            char *list = build_registered_users_list(&list_len);
+            if (list == NULL)
+            {
+                PSE("::: Failed to build registered users list");
+                goto cleanup;
+            }
+            if (list_len > UINT32_MAX)
+            {
+                PSE("::: Registered users list too large");
+                free(list);
+                goto cleanup;
+            }
+            uint32_t list_len_net = htonl((uint32_t)list_len);
+            if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
+            {
+                PSE("::: Failed to send list length to [%s]", login_env.sender);
+                free(list);
+                goto cleanup;
+            }
+
+            ERROR_CODE ack = ERROR;
+            if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
+            {
+                PSE("::: Failed to receive list ack from [%s]", login_env.sender);
+                free(list);
+                goto cleanup;
+            }
+            if (ack != NO_ERROR)
+            {
+                P("[%d]::: Client aborted list users", connection_fd);
+                free(list);
+                handled = 1;
+                break;
+            }
+
+            if (unlikely(send_all(connection_fd, list, list_len) < 0))
+            {
+                PSE("::: Failed to send users list to [%s]", login_env.sender);
+                free(list);
+                goto cleanup;
+            }
+            free(list);
+            handled = 1;
+            break;
+        }
+        case REQUEST_LOAD_PREVIOUS_MESSAGES:
+            P("[%d]::: REQUEST_LOAD_PREVIOUS_MESSAGES received (not implemented)", connection_fd);
+            handled = 1;
+            break;
+        case REQUEST_LOAD_MESSAGE:
+        {
+            P("[%d]::: REQUEST_LOAD_MESSAGE received", connection_fd);
+            size_t file_count = 0;
+            char **files = collect_message_files(user_dir_path, 0, &file_count);
+            char *list = NULL;
+            size_t list_len = 0;
+
+            if (file_count == 0)
+            {
+                list = malloc(1);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to allocate empty list");
+                    goto cleanup;
+                }
+                list[0] = '\0';
+                list_len = 1;
+            }
+            else
+            {
+                list = build_list_from_files(files, file_count, &list_len);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to build message list");
+                    free_message_files(files, file_count);
+                    goto cleanup;
+                }
+            }
+
+            if (list_len > UINT32_MAX)
+            {
+                PSE("::: Message list too large");
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            uint32_t list_len_net = htonl((uint32_t)list_len);
+            if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
+            {
+                PSE("::: Failed to send message list length to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            ERROR_CODE ack = ERROR;
+            if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
+            {
+                PSE("::: Failed to receive message list ack from [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+            if (ack != NO_ERROR)
+            {
+                P("[%d]::: Client aborted message list", connection_fd);
+                free(list);
+                free_message_files(files, file_count);
+                handled = 1;
+                break;
+            }
+
+            if (unlikely(send_all(connection_fd, list, list_len) < 0))
+            {
+                PSE("::: Failed to send message list to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+            free(list);
+            free_message_files(files, file_count);
+
+            MESSAGE_CODE next_code = MESSAGE_ERROR;
+            if (unlikely(recv_all(connection_fd, &next_code, sizeof(next_code)) <= 0))
+            {
+                PSE("::: Failed to receive message selection code from [%s]", login_env.sender);
+                goto cleanup;
+            }
+
+            if (next_code == MESSAGE_OPERATION_ABORTED)
+            {
+                P("[%d]::: Client aborted message load", connection_fd);
+                handled = 1;
+                break;
+            }
+            if (next_code != REQUEST_LOAD_SPECIFIC_MESSAGE)
+            {
+                P("[%d]::: Unexpected code after message list: %d", connection_fd, next_code);
+                handled = 1;
+                break;
+            }
+
+            char filename[512] = {0};
+            int filename_recv = recv_cstring(connection_fd, filename, sizeof(filename));
+            if (filename_recv <= 0)
+            {
+                PSE("::: Failed to receive message filename from [%s]", login_env.sender);
+                goto cleanup;
+            }
+
+            if (!sanitize_filename(filename))
+            {
+                MESSAGE_CODE not_found = MESSAGE_NOT_FOUND;
+                if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
+                {
+                    PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                }
+                handled = 1;
+                break;
+            }
+
+            size_t path_len = strlen(user_dir_path) + 1 + strlen(filename) + 1;
+            char *full_path = calloc(path_len, sizeof(char));
+            if (full_path == NULL)
+            {
+                PSE("::: Failed to allocate full path for message");
+                goto cleanup;
+            }
+            snprintf(full_path, path_len, "%s/%s", user_dir_path, filename);
+
+            int msg_fd = open(full_path, O_RDONLY);
+            if (msg_fd < 0)
+            {
+                MESSAGE_CODE not_found = MESSAGE_NOT_FOUND;
+                if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
+                {
+                    PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                }
+                free(full_path);
+                handled = 1;
+                break;
+            }
+
+            size_t header_size = offsetof(MESSAGE, message);
+            MESSAGE *header = calloc(1, header_size);
+            if (header == NULL)
+            {
+                PSE("::: Failed to allocate message header");
+                close(msg_fd);
+                free(full_path);
+                goto cleanup;
+            }
+            ssize_t header_read = read(msg_fd, header, header_size);
+            if (header_read != (ssize_t)header_size)
+            {
+                PSE("::: Failed to read message header");
+                close(msg_fd);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+
+            uint32_t body_len = ntohl(header->message_length);
+            if (body_len == 0 || body_len > MESSAGE_SIZE_CHARS)
+            {
+                PSE("::: Invalid message length in file");
+                close(msg_fd);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+
+            char *body = calloc(body_len, sizeof(char));
+            if (body == NULL)
+            {
+                PSE("::: Failed to allocate message body");
+                close(msg_fd);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+            ssize_t body_read = read(msg_fd, body, body_len);
+            if (body_read != (ssize_t)body_len)
+            {
+                PSE("::: Failed to read message body");
+                close(msg_fd);
+                free(body);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+            close(msg_fd);
+
+            ERROR_CODE ok = NO_ERROR;
+            if (unlikely(send_all(connection_fd, &ok, sizeof(ok)) < 0))
+            {
+                PSE("::: Failed to send NO_ERROR to [%s]", login_env.sender);
+                free(body);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+
+            if (unlikely(send_all(connection_fd, header, header_size) < 0))
+            {
+                PSE("::: Failed to send message header to [%s]", login_env.sender);
+                free(body);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+            if (unlikely(send_all(connection_fd, body, body_len) < 0))
+            {
+                PSE("::: Failed to send message body to [%s]", login_env.sender);
+                free(body);
+                free(header);
+                free(full_path);
+                goto cleanup;
+            }
+
+            if (starts_with(filename, "UNREAD"))
+            {
+                const char *new_name = filename + strlen("UNREAD");
+                if (new_name[0] != '\0')
+                {
+                    size_t new_path_len = strlen(user_dir_path) + 1 + strlen(new_name) + 1;
+                    char *new_path = calloc(new_path_len, sizeof(char));
+                    if (new_path != NULL)
+                    {
+                        snprintf(new_path, new_path_len, "%s/%s", user_dir_path, new_name);
+                        rename(full_path, new_path);
+                        free(new_path);
+                    }
+                }
+            }
+
+            free(body);
+            free(header);
+            free(full_path);
+            handled = 1;
+            break;
+        }
+        case REQUEST_LOAD_SPECIFIC_MESSAGE:
+            P("[%d]::: REQUEST_LOAD_SPECIFIC_MESSAGE received (not implemented)", connection_fd);
+            handled = 1;
+            break;
+        case REQUEST_LOAD_UNREAD_MESSAGES:
+        {
+            P("[%d]::: REQUEST_LOAD_UNREAD_MESSAGES received", connection_fd);
+            size_t file_count = 0;
+            char **files = collect_message_files(user_dir_path, 1, &file_count);
+            char *list = NULL;
+            size_t list_len = 0;
+
+            if (file_count == 0)
+            {
+                list = malloc(1);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to allocate empty unread list");
+                    goto cleanup;
+                }
+                list[0] = '\0';
+                list_len = 1;
+            }
+            else
+            {
+                list = build_list_from_files(files, file_count, &list_len);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to build unread message list");
+                    free_message_files(files, file_count);
+                    goto cleanup;
+                }
+            }
+
+            if (list_len > UINT32_MAX)
+            {
+                PSE("::: Unread message list too large");
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            uint32_t list_len_net = htonl((uint32_t)list_len);
+            if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
+            {
+                PSE("::: Failed to send unread list length to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            ERROR_CODE ack = ERROR;
+            if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
+            {
+                PSE("::: Failed to receive unread list ack from [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+            if (ack != NO_ERROR)
+            {
+                P("[%d]::: Client aborted unread list", connection_fd);
+                free(list);
+                free_message_files(files, file_count);
+                handled = 1;
+                break;
+            }
+
+            if (unlikely(send_all(connection_fd, list, list_len) < 0))
+            {
+                PSE("::: Failed to send unread list to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            free(list);
+            free_message_files(files, file_count);
+            handled = 1;
+            break;
+        }
+        case REQUEST_DELETE_MESSAGE:
+        {
+            P("[%d]::: REQUEST_DELETE_MESSAGE received", connection_fd);
+            size_t file_count = 0;
+            char **files = collect_message_files(user_dir_path, 0, &file_count);
+            char *list = NULL;
+            size_t list_len = 0;
+
+            if (file_count == 0)
+            {
+                list = malloc(1);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to allocate empty delete list");
+                    goto cleanup;
+                }
+                list[0] = '\0';
+                list_len = 1;
+            }
+            else
+            {
+                list = build_list_from_files(files, file_count, &list_len);
+                if (list == NULL)
+                {
+                    PSE("::: Failed to build delete message list");
+                    free_message_files(files, file_count);
+                    goto cleanup;
+                }
+            }
+
+            if (list_len > UINT32_MAX)
+            {
+                PSE("::: Delete message list too large");
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            uint32_t list_len_net = htonl((uint32_t)list_len);
+            if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
+            {
+                PSE("::: Failed to send delete list length to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+
+            ERROR_CODE ack = ERROR;
+            if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
+            {
+                PSE("::: Failed to receive delete list ack from [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+            if (ack != NO_ERROR)
+            {
+                P("[%d]::: Client aborted delete list", connection_fd);
+                free(list);
+                free_message_files(files, file_count);
+                handled = 1;
+                break;
+            }
+
+            if (unlikely(send_all(connection_fd, list, list_len) < 0))
+            {
+                PSE("::: Failed to send delete list to [%s]", login_env.sender);
+                free(list);
+                free_message_files(files, file_count);
+                goto cleanup;
+            }
+            free(list);
+            free_message_files(files, file_count);
+
+            MESSAGE_CODE next_code = MESSAGE_ERROR;
+            if (unlikely(recv_all(connection_fd, &next_code, sizeof(next_code)) <= 0))
+            {
+                PSE("::: Failed to receive delete selection code from [%s]", login_env.sender);
+                goto cleanup;
+            }
+
+            if (next_code == MESSAGE_OPERATION_ABORTED)
+            {
+                P("[%d]::: Client aborted delete operation", connection_fd);
+                handled = 1;
+                break;
+            }
+            if (next_code != REQUEST_LOAD_SPECIFIC_MESSAGE)
+            {
+                P("[%d]::: Unexpected code after delete list: %d", connection_fd, next_code);
+                handled = 1;
+                break;
+            }
+
+            char filename[512] = {0};
+            int filename_recv = recv_cstring(connection_fd, filename, sizeof(filename));
+            if (filename_recv <= 0)
+            {
+                PSE("::: Failed to receive delete filename from [%s]", login_env.sender);
+                goto cleanup;
+            }
+
+            if (!sanitize_filename(filename))
+            {
+                MESSAGE_CODE not_found = MESSAGE_NOT_FOUND;
+                if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
+                {
+                    PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                }
+                handled = 1;
+                break;
+            }
+
+            size_t path_len = strlen(user_dir_path) + 1 + strlen(filename) + 1;
+            char *full_path = calloc(path_len, sizeof(char));
+            if (full_path == NULL)
+            {
+                PSE("::: Failed to allocate delete path");
+                goto cleanup;
+            }
+            snprintf(full_path, path_len, "%s/%s", user_dir_path, filename);
+
+            int delete_response = NO_ERROR;
+            if (unlink(full_path) != 0)
+            {
+                delete_response = MESSAGE_NOT_FOUND;
+            }
+            if (unlikely(send_all(connection_fd, &delete_response, sizeof(delete_response)) < 0))
+            {
+                PSE("::: Failed to send delete response to [%s]", login_env.sender);
+                free(full_path);
+                goto cleanup;
+            }
+
+            free(full_path);
+            handled = 1;
+            break;
+        }
+        case LOGOUT:
+            P("[%d]::: LOGOUT received", connection_fd);
+            handled = 1;
+            goto cleanup;
+        default:
+            P("[%d]::: Unknown MESSAGE_CODE [%d]", connection_fd, request_code);
+            break;
+        }
+
+        if (!handled)
+        {
+            MESSAGE_CODE response_code_msg = MESSAGE_ERROR;
+            if (unlikely(send(connection_fd, &response_code_msg, sizeof(response_code_msg), 0) <= 0))
+            {
+                PSE("::: Failed to send MESSAGE_ERROR to [%s]", login_env.sender);
+                goto cleanup;
+            }
+        }
+    }
 
 cleanup:
+    if (current_loggedin_users_used_index >= 0)
+    {
+        remove_loggedin_user(current_loggedin_users_used_index);
+        current_loggedin_users_used_index = -1;
+    }
+    if (user_dir_path != NULL)
+    {
+        free(user_dir_path);
+    }
     if (password_path != NULL)
     {
         free(password_path);
@@ -358,7 +1738,7 @@ cleanup:
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                                   MAIN LOOP                                                   */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
-int main(int, char**) // Unused parameters argc argv
+int main(int argc, char** argv)
 {
     printf("Welcome to PGM server!\n");
     PIE("Testing PIE macro");
@@ -366,6 +1746,23 @@ int main(int, char**) // Unused parameters argc argv
     printf("Printing ascii art and name\n");
     fprintf(stdout, "%s", ascii_art);
     fprintf(stdout, "Program name: %s\n", program_name);
+
+    if (unlikely(sem_init(&current_loggedin_users_semaphore, 0, 1) == -1))
+    {
+        PSE("sem_init() failed for current_loggedin_users_semaphore");
+        E();
+    }
+
+    int32_t port_number = DEFAULT_PORT_NUMBER;
+    const char *env_port = getenv(server_port_env);
+    if (env_port != NULL)
+    {
+        port_number = parse_port_string(env_port, port_number, "environment");
+    }
+    if (argc >= 2)
+    {
+        port_number = parse_port_string(argv[1], port_number, "argument");
+    }
 
     // START SOCKET SERVER HERE
     // Creating a socket for internet communication using domain:IPv4 ; type:TCP ; protocol: default(0) 
@@ -381,9 +1778,12 @@ int main(int, char**) // Unused parameters argc argv
     struct sockaddr_in address = {0}; // Initializing the strct to 0
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY; // Accept connections from any IP address (“accept connections on whatever IPs this host currently has.”)
-    if (PORT_NUMBER > 0 && PORT_NUMBER < 65536)
+    if (port_number > 0 && port_number < 65536)
     {
-        address.sin_port = htons(PORT_NUMBER); // htons converts the port number from host byte order to network byte order (big endian)
+        address.sin_port = htons((uint16_t)port_number); // htonl converts the port number from host byte order to network byte order (big endian)
+                                                         // WARNING: before I used htons here, but it was a mistake since htons is for short (16 bit) and port numbers are 32 bit
+                                                         // WARNING 2: actually I tried htonl but this caused the server to bind to unexpected ports??? So I guess that port numbers are 16 bit, but htons expects a uint16_t as input, so we cast it to uint16_t
+        P("Using specified port: %d", port_number);
     }
     else
     {

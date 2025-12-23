@@ -14,6 +14,7 @@
 #include <stdio.h>  /* For stderr */
 #include <errno.h>  /* For errno */
 #include <string.h> /* For strerror */
+#include <stdint.h> /* For uint32_t */
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                           GLOBAL MACROS DEFINITIONS                                           */
@@ -72,12 +73,19 @@ typedef enum ERROR_CODE
 
 typedef enum MESSAGE_CODE
 {
+    REQUEST_LOAD_UNREAD_MESSAGES = 7,
+    REQUEST_DELETE_MESSAGE = 6,
+    REQUEST_LOAD_SPECIFIC_MESSAGE = 5,
+    REQUEST_LOAD_MESSAGE = 4,
     REQUEST_SEND_MESSAGE = 3,
     REQUEST_LIST_REGISTERED_USERS = 2,
     REQUEST_LOAD_PREVIOUS_MESSAGES = 1,
     MESSAGE_SENT = 0,
     MESSAGE_RECEIVED = 1,
     MESSAGE_ERROR = -1,
+    MESSAGE_OPERATION_ABORTED = -2,
+    MESSAGE_NOT_FOUND = -3,
+    LOGOUT = -4,
 } MESSAGE_CODE;
 
 extern const char *convert_error_code_to_string(const ERROR_CODE code);
@@ -92,20 +100,49 @@ enum sizes_and_constants{
     USERNAME_SIZE_CHARS = 64,
     PASSWORD_SIZE_CHARS = 256,
     MAX_PASSWORD_ATTEMPTS = 3,
+    MAX_AQUIRE_SEMAPHORE_RETRY = 3,
 };
 
 extern const char *password_filename;
 extern const char *data_filename;
+extern const char *folder_suffix_user;
+extern const char *file_suffix_user_data;
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              MESSAGE STRUCT AND METHODS                                       */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/**
+ * @brief Structure representing a message in the Pretty Good Messenger (PGM) system.
+ *
+ * This structure contains the sender and recipient usernames, the length of the message,
+ * and a flexible array member to hold the actual message content.
+ * @warning: The 'message' field is a flexible array member, this allows the structure to be serialized as a contiguous block of memory,
+ * and also to be sent as a single unit over network sockets. However, be careful when allocating and sending because sizeof(MESSAGE) will
+ * just return the size of sender+recipient+int and not include the size of the flexible array member.
+ *
+ * @note write/send offsetof(MESSAGE, message) + message_length bytes.
+ * @note read/recv offsetof(MESSAGE, message) first to get message_length, then read/recv message_length bytes to get the actual message.
+ */
 typedef struct MESSAGE {
     char sender[USERNAME_SIZE_CHARS];
     char recipient[USERNAME_SIZE_CHARS];
-    unsigned int message_length;
-    char *message;
+    uint32_t message_length;
+    char message[];
 } MESSAGE;
+
+/** @example
+size_t header_size = offsetof(MESSAGE, message);
+size_t total_size = header_size + message_length;
+
+MESSAGE *msg = malloc(total_size);
+memset(msg, 0, header_size);
+memcpy(msg->sender, sender, USERNAME_SIZE_CHARS);
+memcpy(msg->recipient, recipient, USERNAME_SIZE_CHARS);
+msg->message_length = htonl((uint32_t)message_length);
+memcpy(msg->message, body, message_length);
+
+// write/send total_size bytes
+*/
 
 /*
  * @note: initialize MESSAGE structure on stack before function call
