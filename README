@@ -1,3 +1,19 @@
+# Specifiacations to be implemented
+Messaging service
+
+Implementation of a message exchange service supported by a sequential or concurrent server (your choice). The service must accept messages coming from clients (generally hosted on machines different from the one where the server resides) and store them.
+
+The client application must provide a user with the following functions:
+1. Reading all messages sent to the user.
+2. Sending a new message to any of the users in the system.
+3. Deleting messages received by the user.
+
+A message must contain at least the fields Recipient, Subject, and Text.
+
+It is specified that the specification requires the implementation of both the client and the server application. Moreover, the service can be used only by authorized users (an authentication mechanism must therefore be provided).
+
+For mixed Unix/Windows projects, it is up to you which of the two applications to develop for one of the two systems.
+
 # Implementation details
 ### Message handling
 When authentication succeeds, the server thread dedicated to the client enters an infinite loop waiting for a `MESSAGE_CODE` value (enum in `3-Global-Variables-and-Functions.c`).  
