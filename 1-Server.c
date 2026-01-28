@@ -10,7 +10,7 @@
  */
 
 #define _GNU_SOURCE     // To get defns of NI_MAXSERV and NI_MAXHOST 
-                        // WARNING: apparently this must be defined before any other inclusion, (Learned the hard way, do not remove this line))
+                        // WARNING: apparently this must be defined before any other inclusion, (Learned the hard way, (do not remove this line))
 #include "3-Global-Variables-and-Functions.h"
 #include "1-Server.h"
 #include <stdio.h>      // printf, fprintf

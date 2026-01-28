@@ -141,10 +141,61 @@ Upon closing the connection, the thread cleanup routine includes:
 
 - Removes the entry from the `current_loggedin_users_bitmap`.
 
-Since this flow is a bit difficult to understand I have created a diagram:
-![Server_users_management](Server Login and Logout Flow.pdf)
 
-### Signal handling
+
+## Signal handling
+Plan (server-side): The application will explicitly handle only `SIGINT`/`SIGTERM` and `SIGPIPE` (but the latter only in the form of return statement from `send`.).
+
+#### Global flag and signal thread
+- Global flag: `volatile sig_atomic_t shutdown_requested`.
+- Block `SIGINT`/`SIGTERM` in all threads; create a dedicated signal-handling thread using `sigwait`.
+    - Why do I not use `pause`? Because `pause` only waits for any unblocked signal that arrives to that specific thread. Does not give me signal info. `sigwait()` does everything I need it for:
+        - From the linux man `sigwait()`: _"The sigwait() function suspends execution of the calling thread until one of the signals specified in the signal set set becomes pending.  For a signal to become pending, it must first be blocked with sigprocmask(2).  The function accepts the signal (removes it from the pending list of signals), and returns the signal number in sig."_
+- Signal thread: on `SIGINT`/`SIGTERM` set the flag, close listening socket, optionally `shutdown()` active client sockets.
+
+#### Updates that were done to the project
+- Every call to `recv`/`send` in worker threads need to implement:
+    - set `SO_RCVTIMEO` (once per accepted socket) to 60s so `recv` wakes and checks the `shutdown_requested` flag periodically
+        - note: not needed for `send`
+    - set `SO_KEEPALIVE` to handle client disconnection
+- Implement "Client disconnect handling" logic
+
+#### Where do threads check the variable?
+- Main accept loop:
+  - before calling `accept`.
+  - after `accept` fails (if `errno == EINTR` then if listener was closed, exit, even if it should not happen if the signals get blocked correctly).
+- Worker loop:
+  - at loop top before doing work.
+  - after any `recv`/`send` error or timeout.
+  - after any `recv` returns 0 (peer closed).
+
+#### Make blocking calls wake up
+- Listening socket: close it to break `accept`.
+- Worker sockets: (or set `SO_RCVTIMEO` to ~60s so `recv` wakes and checks the flag periodically). Only to check the flag, since `SO_KEEPALIVE` will handle client disconnection.
+    - An optional alternative would have been to call `shutdown(fd, SHUT_RDWR)` from the signal thread, but it's more difficult to implement and not really needed.
+
+#### Client disconnect handling
+- Ignore `SIGPIPE` process-wide.
+    - An alternative was to implement `MSG_NOSIGNAL`/`SO_NOSIGPIPE` in all sockets. But I'll go for the first option
+- In all `send()` calls: handle `EPIPE`/`ECONNRESET` in normal send/recv checks.
+- Enable TCP keepalive (`SO_KEEPALIVE`) to avoid clients becoming ghost logins (not closing connections).
+- Worker loop rules:
+  - `recv == 0` -> cleanup.
+  - `errno == EINTR` -> even if should not happen, retry the call.
+  - `errno == EPIPE`/`ECONNRESET`/`ETIMEDOUT` -> cleanup.
+  - `recv == -1`
+    - `errno == EAGAIN/EWOULDBLOCK` -> `SO_RCVTIMEO` timeout, just check the `shutdown_requested` flag
+
+
+
+
+# DEBUG
+### Hold connection mode in the server
+Use the `DEBUG` flag during application compilation to enable debug output in the server.
+If the applcation is not compiled with the `DEBUG` flag, the debug output function will not be even present within the code. This was a personal choice I've made so that the executable's size can be made smaller and there is no need to include other conditional jumps every time a debug message gets printed. 
+
+
+# OLD: TO DELETE
 @TO IMPLEMENT (todo)
 - All interruption get masked before executing critical operations such as saving files. using the `deactivate_interrupts()` function
 - After operations are completed, the function `activate_interrupts()` gets called and all the interrupts happened during that time get executed
@@ -152,9 +203,3 @@ NOTE: if more than one thread calls for `deactivate_interrupts()` nothing bad sh
 
 I need to handle `SIGPIPE` for broken connections, and if that happens then the threads executes `cleanup`.
 (maybe such thing could be implemented only by having a `sig_atomic_t` variable `connection_lost`?)
-
-
-## DEBUG
-### Hold connection mode in the server
-Use the `DEBUG` flag during application compilation to enable debug output in the server.
-If the applcation is not compiled with the `DEBUG` flag, the debug output function will not be even present within the code. This was a personal choice I've made so that the executable's size can be made smaller and there is no need to include other conditional jumps every time a debug message gets printed. 
