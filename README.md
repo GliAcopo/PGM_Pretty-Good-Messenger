@@ -1,3 +1,5 @@
+TODO ABSOLUTELY: implement also the Subject field in the messages!
+
 # Specifiacations to be implemented
 Messaging service
 
