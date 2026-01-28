@@ -14,6 +14,10 @@ It is specified that the specification requires the implementation of both the c
 
 For mixed Unix/Windows projects, it is up to you which of the two applications to develop for one of the two systems.
 
+## My choices:
+1. Concurrent server
+2. Unix-based client application
+
 # Implementation details
 ### Message handling
 When authentication succeeds, the server thread dedicated to the client enters an infinite loop waiting for a `MESSAGE_CODE` value (enum in `3-Global-Variables-and-Functions.c`).  
@@ -152,6 +156,5 @@ I need to handle `SIGPIPE` for broken connections, and if that happens then the 
 
 ## DEBUG
 ### Hold connection mode in the server
-A debug-only mode to keep authenticated connections open for manual testing (for example to verify duplicate-login rejection and concurrent users).  
-When enabled (proposed: `--hold` server argument or `PGM_HOLD_CONNECTION=1` env var), each authenticated thread enters a simple loop that blocks on the socket with a timeout, logs activity, and only exits on client disconnect or explicit stop.  
-No message handling is implemented in this mode yet; it only keeps the session alive.
+Use the `DEBUG` flag during application compilation to enable debug output in the server.
+If the applcation is not compiled with the `DEBUG` flag, the debug output function will not be even present within the code. This was a personal choice I've made so that the executable's size can be made smaller and there is no need to include other conditional jumps every time a debug message gets printed. 
