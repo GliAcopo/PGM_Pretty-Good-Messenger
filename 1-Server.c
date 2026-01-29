@@ -51,38 +51,33 @@ const char *server_port_env = "PGM_SERVER_PORT";
 
 
 /**
- * @brief Parse a decimal port string and return a validated port number.
+ * @brief The function will parse a string (port) and convert it into a number (also doing validation checks).
  *
- * @param value    NUL-terminated string containing the port in base 10. If NULL or empty, the function returns @p fallback.
- * @param fallback Port to return when @p value is NULL/empty or invalid.
- * @param source   Short textual description used in diagnostic messages emitted via P(...).
- * @return The parsed port number as an int32_t, or @p fallback on error.
- *  - Calls strtol(value, &endptr, 10) with errno cleared beforehand.
- *  - If parsing fails (entire string not consumed, out of range, or other error), emits a diagnostic and returns @p fallback.
- *  - If the parsed port is in the privileged range (1..1023), returns 0
- *  - Otherwise returns the parsed port as an int32_t
+ * @param string_port    NULL-terminated string that contains the port in base 10. If NULL or empty, the function will returns @p port_desired_fallback
+ * @param port_desired_fallback Port that gets returned when @p string_port does not satisfy requirements
+ * @return The parsed port number as an int32_t, or @p port_desired_fallback
  */
-static int32_t parse_port_string(const char *value, int32_t fallback, const char *source)
+static int32_t parse_port_string(const char *string_port, int32_t port_desired_fallback)
 {
-    if (value == NULL || value[0] == '\0')
+    if (string_port == NULL || string_port[0] == '\0') // If the string is empty or a null pointer
     {
-        return fallback;
+        return port_desired_fallback;
     }
 
     char *endptr = NULL;
-    errno = 0;
-    long port_long = strtol(value, &endptr, 10);
-    if (endptr == value || *endptr != '\0' || errno != 0 || port_long < 0 || port_long > 65535)
+    errno = 0; // reset errno so we do not get false alarms
+    long port_long = strtol(string_port, &endptr, 10); // convert string port to long
+    if (endptr == string_port || *endptr != '\0' || errno != 0 || port_long < 0 || port_long > 65535)
     {
-        P("Invalid %s port value [%s], using %d", source, value, fallback);
-        return fallback;
+        P("Invalid port string_port [%s], using fallback: %d", string_port, port_desired_fallback);
+        return port_desired_fallback;
     }
-    if (port_long > 0 && port_long < 1024)
+    if (port_long > 0 && port_long < 1024) // If the chosen port is reserved
     {
-        P("Port %ld from %s requires elevated privileges, using ephemeral port", port_long, source);
+        P(" The Port %ld is probably a reserved port on UNIX systems, defaulting to ephemeral", port_long);
         return 0;
     }
-    return (int32_t)port_long;
+    return (int32_t)port_long; // Conversion to silence gcc
 }
 
 /**
@@ -1759,11 +1754,13 @@ int main(int argc, char** argv)
     const char *env_port = getenv(server_port_env);
     if (env_port != NULL)
     {
-        port_number = parse_port_string(env_port, port_number, "environment");
+        P("Port from environment: %s", env_port);
+        port_number = parse_port_string(env_port, port_number);
     }
     if (argc >= 2)
     {
-        port_number = parse_port_string(argv[1], port_number, "argument");
+        P("Port from argument: %s", argv[1]);
+        port_number = parse_port_string(argv[1], port_number);
     }
 
     // START SOCKET SERVER HERE
@@ -1842,14 +1839,7 @@ int main(int argc, char** argv)
     P("Socket listening successfully! Max backlog: %d", MAX_BACKLOG);
 
     // Now we accept connections in loop, each connection will be handled by a different thread
-<<<<<<< Updated upstream
-    int thread_args_connections[MAX_BACKLOG]; // A circular array containing the fds of the connections to pass to the thread
-    uint8_t thread_args_connections_index = 0;// The index of the array to keep track where to write
-                                              // But won't the elements of the array be overwritten by the next connections?
-                                              // No, since the size of the array is the size of the max backlog, so if an element is being overwritten then the thread assigned to that connetion had already closed said connection
-=======
     uint16_t thread_args_connections_index = 0;// The index of the array to keep track where to write
->>>>>>> Stashed changes
     pthread_t thread_id_array[MAX_BACKLOG];   // The thread id array in which we store the thread ids
                                               // @note: we are not joining the threads anywhere, so this is not exactly useful, but may be in future implementations or for debugging
     while (1)
@@ -1889,6 +1879,6 @@ int main(int argc, char** argv)
         // close(new_connection); It's the thread's resposibility to close the socket when done
     }
 
-    printf("Exiting program\n");
+    printf("Exiting program!\n");
     return 0;
 }
