@@ -59,26 +59,34 @@ const char *server_port_env = "PGM_SERVER_PORT";
  */
 static int32_t parse_port_string(const char *string_port, int32_t port_desired_fallback)
 {
-    if (string_port == NULL || string_port[0] == '\0') // If the string is empty or a null pointer
+    if (unlikely(string_port == NULL || string_port[0] == '\0')) // If the string is empty or a null pointer
     {
         return port_desired_fallback;
     }
 
+    long PORT_MIN = 0, PORT_MAX = 65535, RESERVED_MAX = 1023;
+
     char *endptr = NULL;
-    errno = 0; // reset errno so we do not get false alarms
+    errno = 0; // reset errno so no false alarms
+
     long port_long = strtol(string_port, &endptr, 10); // convert string port to long
-    if (endptr == string_port || *endptr != '\0' || errno != 0 || port_long < 0 || port_long > 65535)
+
+    // First check if the string was actually read and then check if the port is in the valid range of ports
+    if (unlikely(endptr == string_port || (endptr && *endptr != '\0') || errno != 0 || port_long < PORT_MIN || port_long > PORT_MAX))
     {
         P("Invalid port string_port [%s], using fallback: %d", string_port, port_desired_fallback);
         return port_desired_fallback;
     }
-    if (port_long > 0 && port_long < 1024) // If the chosen port is reserved
+
+    if (unlikely(port_long > 0 && port_long <= RESERVED_MAX)) // If the chosen port is reserved
     {
         P(" The Port %ld is probably a reserved port on UNIX systems, defaulting to ephemeral", port_long);
         return 0;
     }
+
     return (int32_t)port_long; // Conversion to silence gcc
 }
+
 
 /**
  * @brief Prints all the local IP addresses of the machine
