@@ -145,22 +145,23 @@ ERROR_CODE print_local_ip_addresses(uint16_t port)
 static void dump_loggedin_users(void)
 {
     P("Logged in users bitmap: 0x%08X", current_loggedin_users_bitmap);
+
     for (int i = 0; i < MAX_BACKLOG; i++)
     {
-        if (current_loggedin_users[i] != NULL)
-        {
-            P("\t[%d]: %s", i, current_loggedin_users[i]);
-        }
+        if (current_loggedin_users[i] == NULL)
+            continue;
+
+        P("\t[%d]: %s", i, current_loggedin_users[i]);
     }
 }
 
 static void lock_loggedin_users_or_exit(void)
 {
-    int attempts = 0;
-    while (attempts < MAX_AQUIRE_SEMAPHORE_RETRY)
+    for (int attempt = 1; attempt <= MAX_AQUIRE_SEMAPHORE_RETRY; attempt++)
     {
         struct timespec ts;
-        if (unlikely(clock_gettime(CLOCK_REALTIME, &ts) == -1))
+
+        if (clock_gettime(CLOCK_REALTIME, &ts) == -1)
         {
             PSE("clock_gettime() failed while locking loggedin users");
 #ifdef DEBUG
@@ -168,24 +169,27 @@ static void lock_loggedin_users_or_exit(void)
 #endif
             E();
         }
+
         ts.tv_sec += 5;
 
-        int rc;
-        do
+        for (;;) //for-ever muahahaha
         {
-            rc = sem_timedwait(&current_loggedin_users_semaphore, &ts);
-        } while (rc == -1 && errno == EINTR);
+            if (sem_timedwait(&current_loggedin_users_semaphore, &ts) == 0)
+                return; 
 
-        if (rc == 0)
-        {
-            return;
+            if (errno == EINTR)
+                continue;
+
+            break;
         }
+
         if (errno == ETIMEDOUT)
         {
-            attempts++;
-            P("Timed out waiting for current_loggedin_users_semaphore (%d/%d)", attempts, MAX_AQUIRE_SEMAPHORE_RETRY);
+            P("Timed out waiting for current_loggedin_users_semaphore (%d/%d)",
+              attempt, MAX_AQUIRE_SEMAPHORE_RETRY);
             continue;
         }
+
         PSE("sem_timedwait() failed for current_loggedin_users_semaphore");
         break;
     }
@@ -196,6 +200,7 @@ static void lock_loggedin_users_or_exit(void)
 #endif
     E();
 }
+
 
 static void unlock_loggedin_users_or_exit(void)
 {
