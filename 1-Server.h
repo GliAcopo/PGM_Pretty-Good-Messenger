@@ -9,3 +9,8 @@
  *
  */
 #pragma once /** @note Not truly necessary but you never know...*/
+
+enum server_sizes_and_costants {
+    MAX_AQUIRE_SEMAPHORE_RETRY = 3,
+    MAX_AQUIRE_SEMAPHORE_TIME_WAIT_SECONDS = 10
+}

@@ -100,7 +100,6 @@ enum sizes_and_constants{
     USERNAME_SIZE_CHARS = 64,
     PASSWORD_SIZE_CHARS = 256,
     MAX_PASSWORD_ATTEMPTS = 3,
-    MAX_AQUIRE_SEMAPHORE_RETRY = 3,
 };
 
 extern const char *password_filename;

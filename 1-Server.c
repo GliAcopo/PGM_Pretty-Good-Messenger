@@ -156,45 +156,57 @@ static void dump_loggedin_users(void)
 
     for (int i = 0; i < MAX_BACKLOG; i++)
     {
-        if (current_loggedin_users[i] == NULL)
-            continue;
-
-        P("\t[%d]: %s", i, current_loggedin_users[i]);
+        if (likely(current_loggedin_users[i] != NULL))
+            P("\t[%d]: %s", i, current_loggedin_users[i]); // \t tabulates output, so that the user sees pretty output
     }
 }
 
+/**
+ * @brief: function that tries to aquire the semaphore to the loggedin users array before triying to modify it (e.g. another thread needs to add a user that logged in)
+ */
 static void lock_loggedin_users_or_exit(void)
 {
-    for (int attempt = 1; attempt <= MAX_AQUIRE_SEMAPHORE_RETRY; attempt++)
+    for (int attempt = 1; attempt <= MAX_AQUIRE_SEMAPHORE_RETRY; attempt++) // MAX_AQUIRE_SEMAPHORE_RETRY Defined in 1-Server.h
     {
+        /** From the linux man page for clock_gettime
+         int clock_gettime(clockid_t clockid, struct timespec *tp);
+         */
+        // From the linux man page for timespec
+        //  struct timespec {
+        //     time_t     tv_sec;   /* Seconds */
+        //    /* ... */  tv_nsec;  /* Nanoseconds [0, 999'999'999] */
+        //   };
+        
         struct timespec ts;
 
-        if (clock_gettime(CLOCK_REALTIME, &ts) == -1)
+        if (unlikely(clock_gettime(CLOCK_REALTIME, &ts) == -1))
         {
             PSE("clock_gettime() failed while locking loggedin users");
-#ifdef DEBUG
-            dump_loggedin_users();
-#endif
+            #ifdef DEBUG
+                dump_loggedin_users();
+            #endif
             E();
         }
 
-        ts.tv_sec += 5;
+        ts.tv_sec += MAX_AQUIRE_SEMAPHORE_TIME_WAIT_SECONDS; // Defined in 1-Server.h
 
         for (;;) //for-ever muahahaha
         {
-            if (sem_timedwait(&current_loggedin_users_semaphore, &ts) == 0)
-                return; 
+            if (likely(sem_timedwait(&current_loggedin_users_semaphore, &ts) == 0))
+                return; // No error return
 
-            if (errno == EINTR)
+            if (likely(errno == EINTR)) // Interruption because of signal, this code should be unreachable since the signal are masked, but I do not want to delete this check because I wrote it
                 continue;
-
+            else{
+                // Something gone wrong
+                PSE("sem_timedwait() failed :(");
+            }
             break;
         }
 
-        if (errno == ETIMEDOUT)
+        if (unlikely(errno == ETIMEDOUT)) // ETIMEDOUT: (sem_timedwait()) The call timed out before the semaphore could be locked.
         {
-            P("Timed out waiting for current_loggedin_users_semaphore (%d/%d)",
-              attempt, MAX_AQUIRE_SEMAPHORE_RETRY);
+            P("Timed out waiting for current_loggedin_users_semaphore (%d/%d)", attempt, MAX_AQUIRE_SEMAPHORE_RETRY);
             continue;
         }
 
@@ -203,11 +215,12 @@ static void lock_loggedin_users_or_exit(void)
     }
 
     P("Unable to acquire current_loggedin_users_semaphore, exiting");
-#ifdef DEBUG
-    dump_loggedin_users();
-#endif
+    #ifdef DEBUG
+        dump_loggedin_users();
+    #endif
     E();
 }
+
 
 
 static void unlock_loggedin_users_or_exit(void)
@@ -303,55 +316,64 @@ static void remove_loggedin_user(int index)
     unlock_loggedin_users_or_exit();
 }
 
+/** 
+ * @brief: this function assures that all data that needs to be sent is sent through the socket, if some data is left, then  */
 static int send_all(int fd, const void *buffer, size_t length)
 {
-    const char *cursor = buffer;
-    size_t remaining = length;
-    while (remaining > 0)
+    const char *p = (const char *)buffer;
+    size_t left = length;
+
+    while (left)
     {
-        ssize_t sent = send(fd, cursor, remaining, 0);
-        if (sent < 0)
+        const ssize_t n = send(fd, p, left, 0);
+
+        if (likely(n > 0))
         {
-            if (errno == EINTR)
-            {
-                continue;
-            }
-            return -1;
+            p += n;
+            left -= (size_t)n;
+            continue;
         }
-        if (sent == 0)
-        {
+
+        if (n == 0)
             return -1;
-        }
-        cursor += sent;
-        remaining -= (size_t)sent;
+
+        if (errno == EINTR)
+            continue;
+
+        return -1;
     }
+
     return 0;
 }
 
 static int recv_all(int fd, void *buffer, size_t length)
 {
-    char *cursor = buffer;
-    size_t remaining = length;
-    while (remaining > 0)
+    char *p = (char *)buffer;
+    size_t left = length;
+
+    while (left)
     {
-        ssize_t recvd = recv(fd, cursor, remaining, 0);
-        if (recvd < 0)
+        const ssize_t n = recv(fd, p, left, 0);
+
+        if (likely(n > 0))
         {
-            if (errno == EINTR)
-            {
-                continue;
-            }
-            return -1;
+            p += n;
+            left -= (size_t)n;
+            continue;
         }
-        if (recvd == 0)
-        {
+
+        if (n == 0)
             return 0;
-        }
-        cursor += recvd;
-        remaining -= (size_t)recvd;
+
+        if (errno == EINTR)
+            continue;
+
+        return -1;
     }
+
     return 1;
 }
+
 
 static int ends_with(const char *value, const char *suffix)
 {
