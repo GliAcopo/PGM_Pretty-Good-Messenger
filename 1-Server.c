@@ -374,123 +374,195 @@ static int recv_all(int fd, void *buffer, size_t length)
     return 1;
 }
 
-
+/** 
+ * @brief super easy helper function to check if a string ends with a certain suffix
+ * It ain't much but keeps things clean
+ * @return boolean
+ */
 static int ends_with(const char *value, const char *suffix)
 {
-    size_t value_len = strlen(value);
-    size_t suffix_len = strlen(suffix);
-    if (suffix_len > value_len)
+    // value_len = strlen(value);
+    // suffix_len = strlen(suffix);
+    if (strlen(suffix) > strlen(value))
     {
         return 0;
     }
-    return strcmp(value + (value_len - suffix_len), suffix) == 0;
+    return strcmp(value + (strlen(value) - strlen(suffix)), suffix) == 0;
 }
 
+/** 
+ * @brief super easy helper function to check if a string starts with a certain prefix
+ * Like said above
+ * @return boolean
+ */
 static int starts_with(const char *value, const char *prefix)
 {
-    size_t value_len = strlen(value);
-    size_t prefix_len = strlen(prefix);
-    if (prefix_len > value_len)
+    // value_len is the strlen(value);
+    // prefix_len is the strlen(prefix);
+    if (strlen(prefix) > strlen(value))
     {
         return 0;
     }
-    return strncmp(value, prefix, prefix_len) == 0;
+    return strncmp(value, prefix, strlen(prefix)) == 0;
 }
 
-static char *build_registered_users_list(size_t *out_len)
+/**
+ * @brief function that builds the list of REGISTERED (not online) users by scanning the current directory for folders that end with the folder suffix defined in 3-Global-Variables-and-Functions.h (e.g. "_user")
+ * 
+ * @param out_len 
+ * @return char* 
+ */
+static char *build_list_of_registered_users(size_t *output_length) // We use a parameter to tell the reader the lenght of the buffer we return
 {
-    if (out_len == NULL)
+    if (output_length == NULL)
     {
         return NULL;
     }
 
-    DIR *dir = opendir(".");
-    if (dir == NULL)
+    /* The  opendir() function opens a directory stream corresponding to the directory name, and returns a pointer to
+       the directory stream.  The stream is positioned at the first entry in the directory.
+       The opendir() and fdopendir() functions return a pointer to the directory stream.  On error, NULL is returned,
+       and errno is set to indicate the error.
+    */
+    DIR *directory = opendir("."); // Open the dir the application is running in
+    if (unlikely(directory == NULL))
     {
+        PSE("opendir() failed");
         return NULL;
     }
 
-    size_t used = 0;
-    size_t cap = 0;
-    char *list = NULL;
-    struct dirent *entry = NULL;
-    size_t suffix_len = strlen(folder_suffix_user);
+    size_t bytes_used = 0; // Bytes already used to store names in the user_list_buffer buffer
+    size_t buffer_capacity = 0; // The current max capacity of the user_list_buffer buffer
+    char *user_list_buffer = NULL; // Buffer that will hold the list of registered users
+    struct dirent *directory_entry = NULL; // Points to the current directory entry
+    size_t folder_suffix_length = strlen(folder_suffix_user); // calculate only once
+    /* The  readdir()  function  returns a pointer to a dirent structure representing the next directory entry in the
+       directory stream pointed to by dirp.  It returns NULL on reaching the end of the directory stream or if an er-
+       ror occurred.
 
-    while ((entry = readdir(dir)) != NULL)
+       In the glibc implementation, the dirent structure is defined as follows:
+
+           struct dirent {
+               ino_t          d_ino;       // /* Inode number *
+               off_t          d_off;       // /* Not an offset; see below *
+               unsigned short d_reclen;    // /* Length of this record *
+               unsigned char  d_type;      // /* Type of file; not supported
+                                           //   by all filesystem types *
+               char           d_name[256]; // /* Null-terminated filename *
+           };
+    */
+    while ((directory_entry = readdir(directory)) != NULL) // While there are still entries to read within the directory we check if they are user folders
     {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+        if (!ends_with(directory_entry->d_name, folder_suffix_user)) // If it is not a user we do not care
         {
             continue;
         }
+        //else
 
-        if (!ends_with(entry->d_name, folder_suffix_user))
+        // check if the entry is actually a user DIRECTORY and not just a file that ends with the user suffix because the application would explode if that would be the case
+        /*
+        struct stat entry_stat = {0};
+        if (stat(directory_entry->d_name, &entry_stat) != 0)
         {
             continue;
         }
+        if (!S_ISDIR(entry_stat.st_mode))
+        {
+            continue;
+        }
+        */
 
-        struct stat st = {0};
-        if (stat(entry->d_name, &st) != 0)
+        // Extract username from the folder name
+        size_t username_length = strlen(directory_entry->d_name) - folder_suffix_length;
+        size_t bytes_needed = username_length + 1;
+        
+        // Check if current buffer has enough space for: used bytes + new username + newline + null terminator, if not increase size
+        if (bytes_used + bytes_needed + 1 > buffer_capacity)
         {
-            continue;
-        }
-        if (!S_ISDIR(st.st_mode))
-        {
-            continue;
-        }
-
-        size_t name_len = strlen(entry->d_name) - suffix_len;
-        size_t needed = name_len + 1;
-        if (used + needed + 1 > cap)
-        {
-            size_t next_cap = cap == 0 ? 128 : cap * 2;
-            while (used + needed + 1 > next_cap)
+            size_t next_capacity;
+            
+            // For the first time start with 128 bytes
+            if (buffer_capacity == 0)
             {
-                next_cap *= 2;
+                next_capacity = 128;
             }
-            char *new_list = realloc(list, next_cap);
-            if (new_list == NULL)
+            else
             {
-                free(list);
-                closedir(dir);
+                // Increase capacity since it is too small to hold the names
+                next_capacity = buffer_capacity + 128;
+            }
+            
+            
+            while (bytes_used + bytes_needed + 1 > next_capacity) // Increase capacity until it's large enough to hold all data
+            {
+                next_capacity += 128; // Increase by chunks of 128 bytes 
+            }
+            
+            // Resize the buffer to the new capacity using another variable because if the allocation fails we also lose the handle to free the old buffer
+            char *reallocated_list = realloc(user_list_buffer, next_capacity);
+            if (unlikely(reallocated_list == NULL))
+            {
+                PSE("Failed to allocate memory for user list buffer");
+                free(user_list_buffer);
+                closedir(directory);
                 return NULL;
             }
-            list = new_list;
-            cap = next_cap;
+            
+            // Update the pointer
+            user_list_buffer = reallocated_list;
+            buffer_capacity = next_capacity; // Keep track of new capacity
         }
 
-        memcpy(list + used, entry->d_name, name_len);
-        used += name_len;
-        list[used++] = '\n';
+        // Copy the username (without the suffix) into the buffer at the current position
+        // void *memcpy(void dest[restrict .n], const void src[restrict .n], size_t n);
+        memcpy(&user_list_buffer[bytes_used], directory_entry->d_name, username_length);
+        
+        // Advance the bytes_used counter by the username length
+        bytes_used += username_length;
+        
+        // Add a newline character after the username and increment bytes_used
+        user_list_buffer[bytes_used++] = '\n';
     }
 
-    closedir(dir);
+    closedir(directory);
 
-    if (list == NULL)
+    // No users found so return an empty string
+    if (user_list_buffer == NULL)
     {
-        list = malloc(1);
-        if (list == NULL)
+        user_list_buffer = malloc(1); // Malloc to return something to the reader (null terminator)
+        if (unlikely(user_list_buffer == NULL))
         {
+            PSE("Failed to allocate memory for empty user list buffer");
             return NULL;
         }
-        list[0] = '\0';
-        *out_len = 1;
-        return list;
+        user_list_buffer[0] = '\0';
+        *output_length = 1;
+        return user_list_buffer;
     }
 
-    if (used + 1 > cap)
+    if (bytes_used + 1 > buffer_capacity)
     {
-        char *new_list = realloc(list, used + 1);
-        if (new_list == NULL)
+        PE("NO ROOM FOR NULL TERMINATOR!");
+        
+        char *reallocated_list = realloc(user_list_buffer, bytes_used + 1);
+        if (reallocated_list == NULL)
         {
-            free(list);
+            free(user_list_buffer);
             return NULL;
         }
-        list = new_list;
+        user_list_buffer = reallocated_list;
+        
     }
-    list[used++] = '\0';
-    *out_len = used;
-    return list;
+    else
+    {
+        user_list_buffer[bytes_used++] = '\0';
+        *output_length = bytes_used;
+    }
+    
+    return user_list_buffer;
 }
+
+
 
 static int sanitize_username(const char *value)
 {
@@ -510,13 +582,6 @@ static int sanitize_username(const char *value)
         }
     }
     return 1;
-}
-
-static int compare_strings_desc(const void *a, const void *b)
-{
-    const char *sa = *(const char * const *)a;
-    const char *sb = *(const char * const *)b;
-    return strcmp(sb, sa);
 }
 
 static int sanitize_filename(const char *value)
@@ -542,6 +607,7 @@ static int sanitize_filename(const char *value)
     }
     return 1;
 }
+
 
 static int recv_cstring(int fd, char *buffer, size_t max_len)
 {
@@ -576,80 +642,123 @@ static int recv_cstring(int fd, char *buffer, size_t max_len)
     return -1;
 }
 
-static char **collect_message_files(const char *user_dir, int only_unread, size_t *out_count)
+/**
+ * @brief Function needed for the qsort call in collect_message_files, it compares two strings in descending order putting newest files first since the name of the files are based on timestamps
+ * 
+ * @param a 
+ * @param b 
+ * @return int 
+ */
+static int compare_strings_desc(const void *a, const void *b) // Compare strings descending
 {
-    if (out_count == NULL || user_dir == NULL)
-    {
-        return NULL;
-    }
-
-    DIR *dir = opendir(user_dir);
-    if (dir == NULL)
-    {
-        return NULL;
-    }
-
-    size_t count = 0;
-    size_t cap = 0;
-    char **files = NULL;
-    struct dirent *entry = NULL;
-
-    while ((entry = readdir(dir)) != NULL)
-    {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-        {
-            continue;
-        }
-        if (!ends_with(entry->d_name, file_suffix_user_data))
-        {
-            continue;
-        }
-        if (strcmp(entry->d_name, password_filename) == 0 || strcmp(entry->d_name, data_filename) == 0)
-        {
-            continue;
-        }
-        if (only_unread && !starts_with(entry->d_name, "UNREAD"))
-        {
-            continue;
-        }
-
-        size_t name_len = strlen(entry->d_name);
-        char *name_copy = malloc(name_len + 1);
-        if (name_copy == NULL)
-        {
-            continue;
-        }
-        memcpy(name_copy, entry->d_name, name_len + 1);
-
-        if (count + 1 > cap)
-        {
-            size_t next_cap = cap == 0 ? 16 : cap * 2;
-            char **new_files = realloc(files, next_cap * sizeof(char *));
-            if (new_files == NULL)
-            {
-                free(name_copy);
-                continue;
-            }
-            files = new_files;
-            cap = next_cap;
-        }
-        files[count++] = name_copy;
-    }
-
-    closedir(dir);
-
-    if (files == NULL)
-    {
-        *out_count = 0;
-        return NULL;
-    }
-
-    qsort(files, count, sizeof(char *), compare_strings_desc);
-
-    *out_count = count;
-    return files;
+    const char *sa = *(const char * const *)a;
+    const char *sb = *(const char * const *)b;
+    return strcmp(sb, sa);
 }
 
+/**
+ * @brief Collects all the timestamps of the messages for the requesting user, if only_unread_messages is set to 1, then it collects only the messages that are unread (those that start with "UNREAD"), the function returns an array of strings that are the filenames of the messages, the number of files collected is returned through the output_file_count parameter
+ * 
+ * @param user_directory_path 
+ * @param only_unread_messages 
+ * @param output_file_count 
+ * @return char** 
+ */
+static char **collect_message_files(const char *user_directory_path, int only_unread_messages, size_t *output_file_count)
+{
+    if (unlikely(output_file_count == NULL || user_directory_path == NULL)) // input check
+    {
+        ierror = NULL_PARAMETERS;
+        PIE("Invalid parameters for collect_message_files");
+        return NULL;
+    }
+
+    DIR *directory_stream = opendir(user_directory_path);
+    if (unlikely(directory_stream == NULL))
+    {
+        PSE("Failed to open user directory: %s", user_directory_path);
+        return NULL;
+    }
+
+    size_t collected_file_count = 0;
+    size_t files_array_capacity = 0;
+    char **collected_message_files = NULL;
+    struct dirent *directory_entry = NULL;
+
+    while ((directory_entry = readdir(directory_stream)) != NULL)
+    {
+        
+        if (!ends_with(directory_entry->d_name, file_suffix_user_data))
+        { // if it is not a user data file we do not care, this should also filters out the password file
+            continue;
+        }
+        else if (strcmp(directory_entry->d_name, password_filename) == 0 || strcmp(directory_entry->d_name, data_filename) == 0)
+        { // Skip password and data files (double check)
+            continue;
+        }
+        if (only_unread_messages && !starts_with(directory_entry->d_name, "UNREAD"))
+        { // if we only want unread messages and the file does not start with UNREAD, then we skip it
+            continue;
+        }
+
+        size_t filename_length = strlen(directory_entry->d_name);
+        char *filename_copy = malloc(filename_length + 1);
+        if (filename_copy == NULL)
+        {
+            PSE("Failed to allocate memory for filename copy");
+            continue; // not handled as fatal error
+        }
+        memcpy(filename_copy, directory_entry->d_name, filename_length + 1);
+
+        if (collected_file_count + 1 > files_array_capacity)
+        {
+            size_t next_array_capacity;
+            if (files_array_capacity == 0) next_array_capacity = 5;
+            else next_array_capacity = files_array_capacity + 5; // Increase capacity by chunks of 5 pointers
+
+            // Resize the array to hold more pointers
+            char **reallocated_files_array = realloc(collected_message_files, next_array_capacity * sizeof(char *));
+            
+            // If realloc failed, free the filename copy and skip this file
+            if (reallocated_files_array == NULL)
+            {
+                PSE("Failed to allocate memory for collected message files array");
+                free(filename_copy);
+                continue; // still not fatal
+            }
+            
+            // Update the main pointer to the resized array
+            collected_message_files = reallocated_files_array;
+            
+            // Track the new capacity
+            files_array_capacity = next_array_capacity;
+        }
+        collected_message_files[collected_file_count++] = filename_copy;
+    }
+
+    closedir(directory_stream);
+
+    if (collected_message_files == NULL)
+    {   // no messages for the user
+        *output_file_count = 0;
+        return NULL;
+    }
+
+    /* qsort, qsort_r - sort an array
+    void qsort(void base[.size * .nmemb], size_t nmemb, size_t size, int (*compar)(const void [.size], const void [.size]));
+    */
+    qsort(collected_message_files, collected_file_count, sizeof(char *), compare_strings_desc);
+
+    *output_file_count = collected_file_count;
+    return collected_message_files;
+}
+
+/**
+ * @brief helper function to free the memory allocated for an array of message file names
+ * 
+ * @param files 
+ * @param count 
+ */
 static void free_message_files(char **files, size_t count)
 {
     if (files == NULL)
@@ -1214,7 +1323,7 @@ void *thread_routine(void *arg)
         {
             P("[%d]::: REQUEST_LIST_REGISTERED_USERS received", connection_fd);
             size_t list_len = 0;
-            char *list = build_registered_users_list(&list_len);
+            char *list = build_list_of_registered_users(&list_len);
             if (list == NULL)
             {
                 PSE("::: Failed to build registered users list");
