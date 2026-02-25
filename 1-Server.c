@@ -1991,6 +1991,11 @@ int main(int argc, char** argv)
                                               // @note: we are not joining the threads anywhere, so this is not exactly useful, but may be in future implementations or for debugging
     while (1)
     {
+        if (shutdown_now)
+        {
+            P("Shutdown variable set, stopping main thread server...");
+            break;
+        }
         P("Waiting for incoming connections...");
         // We necessarily need to create this variables on stack since the accept function uses pointers to them
         int new_connection;
@@ -1999,6 +2004,11 @@ int main(int argc, char** argv)
         if (unlikely((new_connection = accept(skt_fd, (struct sockaddr *)&client_address, &client_addrlen)) < 0))
         {
             PSE("Socket accept failed");
+            if (shutdown_now)
+            {
+                P("Shutdown variable set, stopping main thread server...");
+                break;
+            }
             continue; // We do not exit the program, we just continue to accept new connections
         }
         P("Connection accepted from IP: %s, Port: %d, New socket file descriptor: %d", inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port), new_connection);
@@ -2011,6 +2021,11 @@ int main(int argc, char** argv)
             continue;
         }
         *connection_fd_ptr = new_connection;
+        if (shutdown_now)
+        {
+            P("Shutdown variable set, stopping main thread server...");
+            break;
+        }
         if (unlikely(pthread_create(&thread_id_array[thread_args_connections_index], NULL, thread_routine, (void *)connection_fd_ptr) < 0))
         {
             PSE("Failed to create thread for connection fd: %d", new_connection);
