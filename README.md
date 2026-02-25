@@ -149,7 +149,7 @@ Upon closing the connection, the thread cleanup routine includes:
 Plan (server-side): The application will explicitly handle only `SIGINT`/`SIGTERM` and `SIGPIPE` (but the latter only in the form of return statement from `send`.).
 
 #### Global flag and signal thread
-- Global flag: `volatile sig_atomic_t shutdown_requested`.
+- Global flag: `volatile sig_atomic_t shutdown_now`.
 - Block `SIGINT`/`SIGTERM` in all threads; create a dedicated signal-handling thread using `sigwait`.
     - Why do I not use `pause`? Because `pause` only waits for any unblocked signal that arrives to that specific thread. Does not give me signal info. `sigwait()` does everything I need it for:
         - From the linux man `sigwait()`: _"The sigwait() function suspends execution of the calling thread until one of the signals specified in the signal set set becomes pending.  For a signal to become pending, it must first be blocked with sigprocmask(2).  The function accepts the signal (removes it from the pending list of signals), and returns the signal number in sig."_
@@ -157,7 +157,7 @@ Plan (server-side): The application will explicitly handle only `SIGINT`/`SIGTER
 
 #### Updates that were done to the project
 - Every call to `recv`/`send` in worker threads need to implement:
-    - set `SO_RCVTIMEO` (once per accepted socket) to 60s so `recv` wakes and checks the `shutdown_requested` flag periodically
+    - set `SO_RCVTIMEO` (once per accepted socket) to 60s so `recv` wakes and checks the `shutdown_now` flag periodically
         - note: not needed for `send`
     - set `SO_KEEPALIVE` to handle client disconnection
 - Implement "Client disconnect handling" logic
@@ -186,7 +186,7 @@ Plan (server-side): The application will explicitly handle only `SIGINT`/`SIGTER
   - `errno == EINTR` -> even if should not happen, retry the call.
   - `errno == EPIPE`/`ECONNRESET`/`ETIMEDOUT` -> cleanup.
   - `recv == -1`
-    - `errno == EAGAIN/EWOULDBLOCK` -> `SO_RCVTIMEO` timeout, just check the `shutdown_requested` flag
+    - `errno == EAGAIN/EWOULDBLOCK` -> `SO_RCVTIMEO` timeout, just check the `shutdown_now` flag
 
 
 

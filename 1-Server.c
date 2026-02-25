@@ -49,6 +49,9 @@ ERROR_CODE ierrno = NO_ERROR;
 const int32_t DEFAULT_PORT_NUMBER = 6666; // log_2(65535) = 16 bits, 16-1= 15 (sign) so (to be sure) I decided to use a 32 bit 
 const char *server_port_env = "PGM_SERVER_PORT";
 
+// Sentry variable to shut down the server when needed, 0 false 1 true
+volatile sig_atomic_t shutdown_now = 0;
+
 
 /**
  * @brief The function will parse a string (port) and convert it into a number (also doing validation checks).
