@@ -894,6 +894,10 @@ void *thread_routine(void *arg)
     char *password_path = NULL;
     char *data_path = NULL;
 
+    /* -------------------------------------------------------------------------- */
+    /*                            LOGIN / REGISTRATION                            */
+    /* -------------------------------------------------------------------------- */
+
     // Login / registration
     P("[%d]::: Handling login...", connection_fd);
 
