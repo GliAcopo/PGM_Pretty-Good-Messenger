@@ -870,6 +870,8 @@ void *signal_handler_thread(void *arg)
     return NULL;
 }
 
+
+
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                          COONNECTION HANDLER (THREAD)                                         */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
@@ -901,11 +903,15 @@ void *thread_routine(void *arg)
     // Login / registration
     P("[%d]::: Handling login...", connection_fd);
 
-    //  1) Receive username 
+    //  1) Receive username
     ssize_t received = recv(connection_fd, &login_env.sender, sizeof(login_env.sender), 0);
     if (unlikely(received <= 0))
     {
         PSE("::: Error receiving username for connection fd: %d", connection_fd);
+        if (shutdown_now) {
+            P("Shutdown flag is set, closing thread...");
+            return(NULL);
+        }
         goto cleanup;
     }
     login_env.sender[USERNAME_SIZE_CHARS - 1] = '\0';                     // Defensive null-termination
@@ -984,6 +990,10 @@ void *thread_routine(void *arg)
         if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
         {
             PSE("::: Failed to send START_REGISTRATION to client on fd: %d", connection_fd);
+            if (shutdown_now) {
+                P("Shutdown flag is set, closing thread...");
+                return(NULL);
+            }
             goto cleanup;
         }
         P("[%d]::: Sent START_REGISTRATION to [%s]", connection_fd, login_env.sender);
@@ -993,6 +1003,10 @@ void *thread_routine(void *arg)
         if (unlikely(received <= 0))
         {
             PSE("::: Failed to receive registration password for [%s]", login_env.sender);
+            if (shutdown_now) {
+                P("Shutdown flag is set, closing thread...");
+                return(NULL);
+            }
             goto cleanup;
         }
         client_password[PASSWORD_SIZE_CHARS - 1] = '\0';           // Add null-termination just in case
@@ -1047,6 +1061,10 @@ void *thread_routine(void *arg)
             if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
             {
                 PSE("::: Failed to send registration rejection for [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
             }
             goto cleanup;
         }
@@ -1055,6 +1073,10 @@ void *thread_routine(void *arg)
         if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
         {
             PSE("::: Failed to confirm registration for [%s]", login_env.sender);
+            if (shutdown_now) {
+                P("Shutdown flag is set, closing thread...");
+                return(NULL);
+            }
             goto cleanup;
         }
         P("[%d]::: Registered new user [%s]!!!", connection_fd, login_env.sender);
@@ -1082,6 +1104,10 @@ void *thread_routine(void *arg)
         if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
         {
             PSE("::: Failed to send login-ready code to [%s]", login_env.sender);
+            if (shutdown_now) {
+                P("Shutdown flag is set, closing thread...");
+                return(NULL);
+            }
             goto cleanup;
         }
 
@@ -1093,6 +1119,10 @@ void *thread_routine(void *arg)
             if (unlikely(received <= 0))
             {
                 PSE("::: Failed to receive password attempt %d for [%s]", attempts + 1, login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 goto cleanup;
             }
             client_password[PASSWORD_SIZE_CHARS - 1] = '\0';
@@ -1107,6 +1137,10 @@ void *thread_routine(void *arg)
                     if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
                     {
                         PSE("::: Failed to send login rejection to [%s]", login_env.sender);
+                        if (shutdown_now) {
+                            P("Shutdown flag is set, closing thread...");
+                            return(NULL);
+                        }
                     }
                     goto cleanup;
                 }
@@ -1125,6 +1159,10 @@ void *thread_routine(void *arg)
             if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
             {
                 PSE("::: Failed to send authentication result to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 goto cleanup;
             }
 
@@ -1154,16 +1192,28 @@ void *thread_routine(void *arg)
         if (recvd == 0)
         {
             P("[%d]::: Client disconnected", connection_fd);
+            if (shutdown_now) {
+                P("Shutdown flag is set, closing thread...");
+                return(NULL);
+            }
             break;
         }
         if (recvd < 0)
         {
             PSE("::: Failed to receive MESSAGE_CODE for [%s]", login_env.sender);
+            if (shutdown_now) {
+                P("Shutdown flag is set, closing thread...");
+                return(NULL);
+            }
             goto cleanup;
         }
         if (recvd != sizeof(request_code))
         {
             P("[%d]::: Incomplete MESSAGE_CODE received (%zd bytes)", connection_fd, recvd);
+            if (shutdown_now) {
+                P("Shutdown flag is set, closing thread...");
+                return(NULL);
+            }
             goto cleanup;
         }
 
@@ -1185,6 +1235,10 @@ void *thread_routine(void *arg)
             if (header_recv <= 0)
             {
                 PSE("::: Failed to receive MESSAGE header for [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(header);
                 goto cleanup;
             }
@@ -1202,6 +1256,10 @@ void *thread_routine(void *arg)
                 if (unlikely(send_all(connection_fd, &invalid, sizeof(invalid)) < 0))
                 {
                     PSE("::: Failed to send STRING_SIZE_INVALID to [%s]", login_env.sender);
+                    if (shutdown_now) {
+                        P("Shutdown flag is set, closing thread...");
+                        return(NULL);
+                    }
                 }
                 free(header);
                 handled = 1;
@@ -1214,6 +1272,10 @@ void *thread_routine(void *arg)
                 if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
                 {
                     PSE("::: Failed to send USER_NOT_FOUND to [%s]", login_env.sender);
+                    if (shutdown_now) {
+                        P("Shutdown flag is set, closing thread...");
+                        return(NULL);
+                    }
                 }
                 free(header);
                 handled = 1;
@@ -1244,6 +1306,10 @@ void *thread_routine(void *arg)
                 if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
                 {
                     PSE("::: Failed to send USER_NOT_FOUND to [%s]", login_env.sender);
+                    if (shutdown_now) {
+                        P("Shutdown flag is set, closing thread...");
+                        return(NULL);
+                    }
                 }
                 free(recipient_dir);
                 free(header);
@@ -1255,6 +1321,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, &ok, sizeof(ok)) < 0))
             {
                 PSE("::: Failed to send NO_ERROR to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(recipient_dir);
                 free(header);
                 goto cleanup;
@@ -1271,6 +1341,10 @@ void *thread_routine(void *arg)
             if (body_recv <= 0)
             {
                 PSE("::: Failed to receive MESSAGE body for [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(body);
                 free(header);
                 goto cleanup;
@@ -1378,6 +1452,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
             {
                 PSE("::: Failed to send list length to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 goto cleanup;
             }
@@ -1386,6 +1464,10 @@ void *thread_routine(void *arg)
             if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
             {
                 PSE("::: Failed to receive list ack from [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 goto cleanup;
             }
@@ -1400,6 +1482,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, list, list_len) < 0))
             {
                 PSE("::: Failed to send users list to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 goto cleanup;
             }
@@ -1453,6 +1539,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
             {
                 PSE("::: Failed to send message list length to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 free_message_files(files, file_count);
                 goto cleanup;
@@ -1462,6 +1552,10 @@ void *thread_routine(void *arg)
             if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
             {
                 PSE("::: Failed to receive message list ack from [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 free_message_files(files, file_count);
                 goto cleanup;
@@ -1478,6 +1572,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, list, list_len) < 0))
             {
                 PSE("::: Failed to send message list to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 free_message_files(files, file_count);
                 goto cleanup;
@@ -1489,6 +1587,10 @@ void *thread_routine(void *arg)
             if (unlikely(recv_all(connection_fd, &next_code, sizeof(next_code)) <= 0))
             {
                 PSE("::: Failed to receive message selection code from [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 goto cleanup;
             }
 
@@ -1510,6 +1612,10 @@ void *thread_routine(void *arg)
             if (filename_recv <= 0)
             {
                 PSE("::: Failed to receive message filename from [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 goto cleanup;
             }
 
@@ -1519,6 +1625,10 @@ void *thread_routine(void *arg)
                 if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
                 {
                     PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                    if (shutdown_now) {
+                        P("Shutdown flag is set, closing thread...");
+                        return(NULL);
+                    }
                 }
                 handled = 1;
                 break;
@@ -1540,6 +1650,10 @@ void *thread_routine(void *arg)
                 if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
                 {
                     PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                    if (shutdown_now) {
+                        P("Shutdown flag is set, closing thread...");
+                        return(NULL);
+                    }
                 }
                 free(full_path);
                 handled = 1;
@@ -1600,6 +1714,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, &ok, sizeof(ok)) < 0))
             {
                 PSE("::: Failed to send NO_ERROR to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(body);
                 free(header);
                 free(full_path);
@@ -1609,6 +1727,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, header, header_size) < 0))
             {
                 PSE("::: Failed to send message header to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(body);
                 free(header);
                 free(full_path);
@@ -1617,6 +1739,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, body, body_len) < 0))
             {
                 PSE("::: Failed to send message body to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(body);
                 free(header);
                 free(full_path);
@@ -1691,6 +1817,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
             {
                 PSE("::: Failed to send unread list length to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 free_message_files(files, file_count);
                 goto cleanup;
@@ -1700,6 +1830,10 @@ void *thread_routine(void *arg)
             if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
             {
                 PSE("::: Failed to receive unread list ack from [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 free_message_files(files, file_count);
                 goto cleanup;
@@ -1716,6 +1850,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, list, list_len) < 0))
             {
                 PSE("::: Failed to send unread list to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 free_message_files(files, file_count);
                 goto cleanup;
@@ -1768,6 +1906,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, &list_len_net, sizeof(list_len_net)) < 0))
             {
                 PSE("::: Failed to send delete list length to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 free_message_files(files, file_count);
                 goto cleanup;
@@ -1777,6 +1919,10 @@ void *thread_routine(void *arg)
             if (unlikely(recv_all(connection_fd, &ack, sizeof(ack)) <= 0))
             {
                 PSE("::: Failed to receive delete list ack from [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 free_message_files(files, file_count);
                 goto cleanup;
@@ -1793,6 +1939,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, list, list_len) < 0))
             {
                 PSE("::: Failed to send delete list to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(list);
                 free_message_files(files, file_count);
                 goto cleanup;
@@ -1804,6 +1954,10 @@ void *thread_routine(void *arg)
             if (unlikely(recv_all(connection_fd, &next_code, sizeof(next_code)) <= 0))
             {
                 PSE("::: Failed to receive delete selection code from [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 goto cleanup;
             }
 
@@ -1825,6 +1979,10 @@ void *thread_routine(void *arg)
             if (filename_recv <= 0)
             {
                 PSE("::: Failed to receive delete filename from [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 goto cleanup;
             }
 
@@ -1834,6 +1992,10 @@ void *thread_routine(void *arg)
                 if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
                 {
                     PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                    if (shutdown_now) {
+                        P("Shutdown flag is set, closing thread...");
+                        return(NULL);
+                    }
                 }
                 handled = 1;
                 break;
@@ -1856,6 +2018,10 @@ void *thread_routine(void *arg)
             if (unlikely(send_all(connection_fd, &delete_response, sizeof(delete_response)) < 0))
             {
                 PSE("::: Failed to send delete response to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 free(full_path);
                 goto cleanup;
             }
@@ -1879,6 +2045,10 @@ void *thread_routine(void *arg)
             if (unlikely(send(connection_fd, &response_code_msg, sizeof(response_code_msg), 0) <= 0))
             {
                 PSE("::: Failed to send MESSAGE_ERROR to [%s]", login_env.sender);
+                if (shutdown_now) {
+                    P("Shutdown flag is set, closing thread...");
+                    return(NULL);
+                }
                 goto cleanup;
             }
         }
@@ -2104,12 +2274,22 @@ int main(int argc, char** argv)
         }
         else{
             // Successfully created thread, increment the index in a circular manner
-            thread_args_connections_index = ((thread_args_connections_index + 1) % MAX_BACKLOG); // Conversion to silence gcc lamenting
+            thread_args_connections_index = ((thread_args_connections_index + 1) % MAX_BACKLOG); // Conversion to silence gcc -> actually gcc was right
             P("Thread [%lu] created successfully for connection fd: %d\n", (unsigned long)thread_id_array[thread_args_connections_index], new_connection);
         }
         // close(new_connection); It's the thread's resposibility to close the socket when done
     }
 
+    /*
+    for(unsigned int i = 0; i < MAX_BACKLOG; i++)
+    {
+        if (thread_id_array[i] != 0)
+        {
+            P("Joining thread [%lu]", (unsigned long)thread_id_array[i]);
+            pthread_join(thread_id_array[i], NULL);
+        }
+    }
+    */
     printf("Exiting program!\n");
     return 0;
 }
