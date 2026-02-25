@@ -53,6 +53,10 @@ const char *server_port_env = "PGM_SERVER_PORT";
 volatile sig_atomic_t shutdown_now = 0;
 
 
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                          HELPER FUNCTIONS                                                     */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+
 /**
  * @brief The function will parse a string (port) and convert it into a number (also doing validation checks).
  *
@@ -839,6 +843,34 @@ static char *build_list_from_files(char **files, size_t count, size_t *out_len)
 }
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                          SIGNAL HANDLER (THREAD)                                              */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+
+void *signal_handler_thread(void *arg)
+{
+    sigset_t *set = (sigset_t *)arg;
+    int sig;
+
+    while (1)
+    {
+        if (sigwait(set, &sig) != 0)
+        {
+            PSE("sigwait() failed in signal handler thread");
+            continue;
+        }
+
+        if (sig == SIGINT || sig == SIGTERM)
+        {
+            P("Received shutdown signal, shutting down server...");
+            shutdown_now = 1;
+            break;
+        }
+    }
+
+    return NULL;
+}
+
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                          COONNECTION HANDLER (THREAD)                                         */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
@@ -862,7 +894,7 @@ void *thread_routine(void *arg)
     char *password_path = NULL;
     char *data_path = NULL;
 
-    // Login / registration handshake
+    // Login / registration
     P("[%d]::: Handling login...", connection_fd);
 
     //  1) Receive username 
@@ -1880,7 +1912,7 @@ cleanup:
 
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
-/*                                                   MAIN LOOP                                                   */
+/*                                                   MAIN                                                   */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 int main(int argc, char** argv)
 {
@@ -1984,6 +2016,39 @@ int main(int argc, char** argv)
         E();
     }
     P("Socket listening successfully! Max backlog: %d", MAX_BACKLOG);
+
+    /* -------------------------------------------------------------------------- */
+    /*                               Signal handling                              */
+    /* -------------------------------------------------------------------------- */
+
+    // Prevent my childs from becoming zombies...
+    // Source - https://stackoverflow.com/a/17015831
+    struct sigaction sigchld_action = {
+        .sa_handler = SIG_DFL,
+        .sa_flags = SA_NOCLDWAIT
+    };
+    sigaction(SIGCHLD, &sigchld_action, NULL);
+
+    // Block signals and make them be handled by the signal thread
+    pthread_t signal_thread_id;
+    sigset_t set; // signal mask
+    // Block both signals
+    sigfillset(&set, SIGINT); 
+    sigfillset(&set, SIGTERM);
+    if (unlikely(pthread_sigmask(SIG_BLOCK, &set, NULL) != 0)) // LINUX MAN: A new thread inherits a copy of its creator's signal mask.
+    {
+        PSE("Failed to block signals in main thread");
+        E();
+    }
+    if (unlikely(pthread_create(&signal_thread_id, NULL, signal_handler_thread, (void *)&set) != 0))
+    {
+        PSE("Failed to create signal handler thread");
+        E();
+    }
+
+    /* -------------------------------------------------------------------------- */
+    /*                                  MAIN LOOP                                 */
+    /* -------------------------------------------------------------------------- */
 
     // Now we accept connections in loop, each connection will be handled by a different thread
     uint16_t thread_args_connections_index = 0;// The index of the array to keep track where to write
