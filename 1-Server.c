@@ -2321,6 +2321,18 @@ int main(int argc, char** argv)
         }
         // close(new_connection); It's the thread's resposibility to close the socket when done
     }
+    // I need to close the listening socket to unblock the accept() call in case it is blocking, so that the server can shutdown gracefully
+    P("Closing listening socket to unblock all working threads...");
+    for (unsigned int i = 0; i < MAX_BACKLOG; i++) 
+    {
+        if (connections_array[i] > 0)  
+        {
+            if (unlikely(shutdown(connections_array[i], SHUT_RDWR) < 0))
+            {
+                PSE("Failed to shutdown connection fd: %d", connections_array[i]);
+            }
+        }
+    }  
 
     // Wait for other threads to finish before shutting down the server, so that unsaved work gets saved
     for(unsigned int i = 0; i < MAX_BACKLOG; i++)
