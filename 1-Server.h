@@ -13,4 +13,9 @@
 enum server_sizes_and_costants {
     MAX_AQUIRE_SEMAPHORE_RETRY = 3,
     MAX_AQUIRE_SEMAPHORE_TIME_WAIT_SECONDS = 10
-}
+};
+
+typedef struct {
+    int connection_fd;
+    int thread_index;
+} thread_args_t;

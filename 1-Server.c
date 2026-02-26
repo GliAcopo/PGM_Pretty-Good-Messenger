@@ -36,11 +36,20 @@
 #define P(fmt, ...) do{fprintf(stdout,"[SRV]>>> " fmt "\n", ##__VA_ARGS__);}while(0);
 
 // Max number of pending connections in the socket listen queue
+// Also used as the maximum number of logged in users / worker threads active at a time
 #define MAX_BACKLOG 10
+
+volatile static size_t number_of_current_logged_in_users = 0;
 
 static char *current_loggedin_users[MAX_BACKLOG] = {0};
 static unsigned int current_loggedin_users_bitmap = 0;
 static sem_t current_loggedin_users_semaphore;
+
+// The thread id array in which we store the thread ids for late joining when shutting down
+pthread_t thread_id_array[MAX_BACKLOG];
+
+// The array of the connection file descriptors to close all the connections
+int connections_array[MAX_BACKLOG] = {0};
 
 // ierror, an internal debug substitute to errno
 ERROR_CODE ierrno = NO_ERROR;
@@ -56,6 +65,19 @@ volatile sig_atomic_t shutdown_now = 0;
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                          HELPER FUNCTIONS                                                     */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+
+static void exit_thread_and_update_thread_id_array(int thread_index)
+{
+    if (thread_index < 0 || thread_index >= MAX_BACKLOG)
+    {
+        P("Invalid thread index for exit_thread_and_update_thread_id_array: %d", thread_index);
+        pthread_exit(NULL);
+    }
+    number_of_current_logged_in_users--; // Decrement the count of logged in users since this thread is exiting
+    thread_id_array[thread_index] = 0;  // Clear the thread id from the array
+    connections_array[thread_index] = 0; // Clear the connection fd from the array
+    pthread_exit(NULL);
+}
 
 /**
  * @brief The function will parse a string (port) and convert it into a number (also doing validation checks).
@@ -878,9 +900,11 @@ void *signal_handler_thread(void *arg)
 
 void *thread_routine(void *arg)
 {
-    int *connection_fd_ptr = (int *)arg;
-    int connection_fd = *connection_fd_ptr;
-    free(connection_fd_ptr);
+    thread_args_t *thread_args = (thread_args_t *)arg;
+    int connection_fd = thread_args->connection_fd;
+    int thread_index = thread_args->thread_index;
+    free(thread_args); // Free the allocated memory for thread arguments
+
     P("[%d]::: Thread started for connection fd: %d", connection_fd, connection_fd);
 
     // const int MAX_PASSWORD_ATTEMPTS = 3; // Of course, if the user fails more than this number of times, we close the connection
@@ -2080,7 +2104,8 @@ cleanup:
         E();
     }
     P("[%d]:::Connection fd: %d closed, thread exiting", connection_fd, connection_fd);
-    pthread_exit(NULL);
+    exit_thread_and_update_thread_id_array(thread_index);
+    pthread_exit(NULL); // Should not be reached
     return NULL; // Should not be reached
 }
 
@@ -2198,8 +2223,8 @@ int main(int argc, char** argv)
     // Prevent my childs from becoming zombies...
     // Source - https://stackoverflow.com/a/17015831
     struct sigaction sigchld_action = {
-        .sa_handler = SIG_DFL,
-        .sa_flags = SA_NOCLDWAIT
+        .sa_handler = SIG_DFL, // Default signal handler for SIGCHLD
+        .sa_flags = SA_NOCLDWAIT // If  signum  is SIGCHLD, do not transform children into zombies when they terminate.
     };
     sigaction(SIGCHLD, &sigchld_action, NULL);
 
@@ -2225,9 +2250,12 @@ int main(int argc, char** argv)
     /* -------------------------------------------------------------------------- */
 
     // Now we accept connections in loop, each connection will be handled by a different thread
-    uint16_t thread_args_connections_index = 0;// The index of the array to keep track where to write
-    pthread_t thread_id_array[MAX_BACKLOG];   // The thread id array in which we store the thread ids
+    size_t thread_args_connections_index = 0;// The index of the array to keep track where to write
+    // Why does this not overwrite other thread ids? because we set the size of the thread id array to MAX_BACKLOG, which is the maximum number of connections that can be waiting at the same time, so we are sure that by the time we overwrite a thread id, the corresponding thread will have finished and its id will not be useful anymore (since we are not joining the threads, we do not care about their ids after they finish)
+    // From [https://blog.clusterweb.com.br/?p=4854] "To summarize, if the TCP implementation in Linux receives the ACK packet of the 3-way handshake and the accept queue is full, it will basically ignore that packet."
+    // MOVED TO START OF THE DOCUMENT FOR GLOBAL ACCESS   // The thread id array in which we store the thread ids
                                               // @note: we are not joining the threads anywhere, so this is not exactly useful, but may be in future implementations or for debugging
+                                              // In the end it was useful indeed
     while (1)
     {
         if (shutdown_now)
@@ -2251,45 +2279,58 @@ int main(int argc, char** argv)
             continue; // We do not exit the program, we just continue to accept new connections
         }
         P("Connection accepted from IP: %s, Port: %d, New socket file descriptor: %d", inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port), new_connection);
-        // CREATE NEW THREAD HANDLING THE CONNECTION:
-        int *connection_fd_ptr = malloc(sizeof(*connection_fd_ptr));
-        if (unlikely(connection_fd_ptr == NULL))
+        
+        // Close connection if the max number of logged in users is reached
+        if (number_of_current_logged_in_users >= MAX_BACKLOG)
         {
-            PSE("Failed to allocate thread argument for connection fd: %d", new_connection);
+            P("Maximum number of logged in users reached, rejecting connection from IP: %s, Port: %d", inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port));
             close(new_connection);
             continue;
         }
-        *connection_fd_ptr = new_connection;
+
+        // CREATE NEW THREAD HANDLING THE CONNECTION: ---------------------------------------
+        thread_args_t *thread_args = malloc(sizeof(thread_args_t));
+        if (thread_args == NULL)
+        {
+            PSE("Failed to allocate memory for thread arguments");
+            close(new_connection);
+            continue;
+        }
+        thread_args->connection_fd = new_connection;
+        thread_args->thread_index = thread_args_connections_index;
+        connections_array[thread_args_connections_index] = new_connection;
         if (shutdown_now)
         {
             P("Shutdown variable set, stopping main thread server...");
             break;
         }
-        if (unlikely(pthread_create(&thread_id_array[thread_args_connections_index], NULL, thread_routine, (void *)connection_fd_ptr) < 0))
+        if (unlikely(pthread_create(&thread_id_array[thread_args_connections_index], NULL, thread_routine, (void *)thread_args) != 0))
         {
             PSE("Failed to create thread for connection fd: %d", new_connection);
             // We close the connection since we cannot handle it
             close(new_connection);
-            free(connection_fd_ptr);
+            connections_array[thread_args_connections_index] = 0; // Clear the connection fd from the array
+            free(thread_args);
         }
         else{
             // Successfully created thread, increment the index in a circular manner
-            thread_args_connections_index = ((thread_args_connections_index + 1) % MAX_BACKLOG); // Conversion to silence gcc -> actually gcc was right
             P("Thread [%lu] created successfully for connection fd: %d\n", (unsigned long)thread_id_array[thread_args_connections_index], new_connection);
+            thread_args_connections_index = ((thread_args_connections_index + 1) % MAX_BACKLOG); // Conversion to silence gcc -> actually gcc was right
+            number_of_current_logged_in_users++;
         }
         // close(new_connection); It's the thread's resposibility to close the socket when done
     }
 
-    /*
+    // Wait for other threads to finish before shutting down the server, so that unsaved work gets saved
     for(unsigned int i = 0; i < MAX_BACKLOG; i++)
     {
         if (thread_id_array[i] != 0)
         {
-            P("Joining thread [%lu]", (unsigned long)thread_id_array[i]);
-            pthread_join(thread_id_array[i], NULL);
+            P("Joining thread [%lu]", (unsigned long)thread_id_array[i]); // Just to print
+            pthread_join(thread_id_array[i], NULL); //  If retval is not NULL, then pthread_join() copies the exit status of the target thread (i.e., the value that the target thread supplied to  pthread_exit(3))  into  the location pointed to by retval.
         }
     }
-    */
+    
     printf("Exiting program!\n");
     return 0;
 }
