@@ -46,10 +46,10 @@ static unsigned int current_loggedin_users_bitmap = 0;
 static sem_t current_loggedin_users_semaphore;
 
 // The thread id array in which we store the thread ids for late joining when shutting down
-pthread_t thread_id_array[MAX_BACKLOG];
+static volatile pthread_t thread_id_array[MAX_BACKLOG] = {0};
 
 // The array of the connection file descriptors to close all the connections
-int connections_array[MAX_BACKLOG] = {0};
+static volatile int connections_array[MAX_BACKLOG] = {0};
 
 // ierror, an internal debug substitute to errno
 ERROR_CODE ierrno = NO_ERROR;
@@ -2289,6 +2289,24 @@ int main(int argc, char** argv)
             continue;
         }
 
+        // CHECK IF SLOT IS FREE: ---------------------------------------
+        while (thread_id_array[thread_args_connections_index] != 0)
+        {
+            PSE("Thread id array index %zu is not 0, a thread is already running on this index", thread_args_connections_index);
+            thread_args_connections_index = ((thread_args_connections_index + 1) % MAX_BACKLOG);
+            if (shutdown_now)
+            {
+                P("Shutdown variable set, stopping main thread server...");
+                break;
+            }
+            sched_yield(); // Yield the CPU to let threads run and finish
+            /*
+            close(new_connection);
+            free(thread_args);
+            continue;
+            */
+        }
+
         // CREATE NEW THREAD HANDLING THE CONNECTION: ---------------------------------------
         thread_args_t *thread_args = malloc(sizeof(thread_args_t));
         if (thread_args == NULL)
@@ -2300,6 +2318,7 @@ int main(int argc, char** argv)
         thread_args->connection_fd = new_connection;
         thread_args->thread_index = thread_args_connections_index;
         connections_array[thread_args_connections_index] = new_connection;
+        
         if (shutdown_now)
         {
             P("Shutdown variable set, stopping main thread server...");
@@ -2313,34 +2332,51 @@ int main(int argc, char** argv)
             connections_array[thread_args_connections_index] = 0; // Clear the connection fd from the array
             free(thread_args);
         }
-        else{
+        else
+        {
             // Successfully created thread, increment the index in a circular manner
             P("Thread [%lu] created successfully for connection fd: %d\n", (unsigned long)thread_id_array[thread_args_connections_index], new_connection);
+            // Add new connection to the connections array for later closing when shutting down the server
+            connections_array[thread_args_connections_index] = new_connection;
+            // Increment index
             thread_args_connections_index = ((thread_args_connections_index + 1) % MAX_BACKLOG); // Conversion to silence gcc -> actually gcc was right
+            // Add another user to the count of logged in users, we do this after creating the thread to be sure that the thread will actually handle the connection and increment the count of logged in users, otherwise we may end up with a situation where we have a thread that is not handling any connection but is still counted as a logged in user, which would prevent new connections from being accepted
             number_of_current_logged_in_users++;
+
         }
         // close(new_connection); It's the thread's resposibility to close the socket when done
     }
     // I need to close the listening socket to unblock the accept() call in case it is blocking, so that the server can shutdown gracefully
-    P("Closing listening socket to unblock all working threads...");
+    P("\t------------------------------------------------------------------");
+    P("\tClosing server NOW!");
+    P("\t------------------------------------------------------------------");
+    
+    // Copy the thread id array and the connections so that we still know wich threads were active when we started shutting down, since the original arrays will be modified by the threads when they finish and set their id to 0 and their connection to 0
+    pthread_t thread_id_array_copy[MAX_BACKLOG] = {0};
+    int connections_array_copy[MAX_BACKLOG] = {0};
+    memcpy(thread_id_array_copy, thread_id_array, sizeof(thread_id_array));
+    memcpy(connections_array_copy, connections_array, sizeof(connections_array));
+
     for (unsigned int i = 0; i < MAX_BACKLOG; i++) 
     {
-        if (connections_array[i] > 0)  
+        if (connections_array_copy[i] > 0)  
         {
-            if (unlikely(shutdown(connections_array[i], SHUT_RDWR) < 0))
+            if (unlikely(shutdown(connections_array_copy[i], SHUT_RDWR) < 0))
             {
-                PSE("Failed to shutdown connection fd: %d", connections_array[i]);
+                PSE("Failed to shutdown connection fd: %d", connections_array_copy[i]);
+                thread_id_array_copy[i] = 0; // We set the thread id to 0 to not try to join it later, since it may be blocked on the socket and we won't be able to join it, but we do not want to leave it hanging there, so we just ignore it and let it finish on its own when it detects that the socket is closed
             }
+
         }
     }  
 
     // Wait for other threads to finish before shutting down the server, so that unsaved work gets saved
     for(unsigned int i = 0; i < MAX_BACKLOG; i++)
     {
-        if (thread_id_array[i] != 0)
+        if (thread_id_array_copy[i] != 0)
         {
-            P("Joining thread [%lu]", (unsigned long)thread_id_array[i]); // Just to print
-            pthread_join(thread_id_array[i], NULL); //  If retval is not NULL, then pthread_join() copies the exit status of the target thread (i.e., the value that the target thread supplied to  pthread_exit(3))  into  the location pointed to by retval.
+            P("Joining thread [%lu]", (unsigned long)thread_id_array_copy[i]); // Just to print
+            pthread_join(thread_id_array_copy[i], NULL); // MAN: If retval is not NULL, then pthread_join() copies the exit status of the target thread (i.e., the value that the target thread supplied to  pthread_exit(3))  into  the location pointed to by retval.
         }
     }
     
