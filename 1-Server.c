@@ -2220,6 +2220,7 @@ int main(int argc, char** argv)
     /*                               Signal handling                              */
     /* -------------------------------------------------------------------------- */
 
+    /* No forks were made so we do not worry about childs
     // Prevent my childs from becoming zombies...
     // Source - https://stackoverflow.com/a/17015831
     struct sigaction sigchld_action = {
@@ -2227,7 +2228,7 @@ int main(int argc, char** argv)
         .sa_flags = SA_NOCLDWAIT // If  signum  is SIGCHLD, do not transform children into zombies when they terminate.
     };
     sigaction(SIGCHLD, &sigchld_action, NULL);
-
+    */
     // Block signals and make them be handled by the signal thread
     pthread_t signal_thread_id;
     sigset_t set; // signal mask
