@@ -72,6 +72,11 @@ static volatile sig_atomic_t shutdown_now = 0;
 /*                                          HELPER FUNCTIONS                                                     */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
+/**
+ * @brief 
+ * 
+ * @param thread_index 
+ */
 static void exit_thread_and_update_thread_id_array(int thread_index)
 {
     if (thread_index < 0 || thread_index >= MAX_BACKLOG)
@@ -113,6 +118,66 @@ static void exit_thread_and_update_thread_id_array(int thread_index)
         continue; // Try again
     }
     pthread_exit(NULL);
+}
+
+/**
+ * @brief Locks the shutdown arrays (thread_id_array, connections_array and number_of_current_logged_in_users) by aquiring the shutdown_arrays_semaphore, if it fails to aquire the semaphore after max_retries retries, then it exits the thread
+ * 
+ * @param max_retries 
+ */
+void lock_shutdown_arrays_or_exit(unsigned int max_retries)
+{
+    if (unlikely(max_retries == 0))
+    {
+        P("Invalid max_retries for lock_shutdown_arrays_or_exit: %u", max_retries);
+        unsigned int max_retries = 5;
+    }
+    else
+    {
+        unsigned int max_retries_copy = max_retries;
+    }
+    
+    while(unlikely(sem_wait(&shutdown_arrays_semaphore) < 0)) // All of these functions return 0 on success
+    {
+        if (unlikely(!max_retries_copy--))
+        {
+            P("sem_wait() failed to aquire semaphore after max_retries retries");
+            pthread_exit(NULL);
+        }
+        PSE("sem_wait() failed to aquire semaphore");
+        sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
+        continue; // Try again
+    }
+}
+
+/**
+ * @brief Locks the shutdown arrays (thread_id_array, connections_array and number_of_current_logged_in_users) by aquiring the shutdown_arrays_semaphore, if it fails to aquire the semaphore after max_retries retries, then it exits the thread
+ * 
+ * @param max_retries 
+ */
+void unlock_shutdown_arrays_or_exit(unsigned int max_retries)
+{
+    if (unlikely(max_retries == 0))
+    {
+        P("Invalid max_retries for unlock_shutdown_arrays_or_exit: %u", max_retries);
+        unsigned int max_retries = 5;
+    }
+    else
+    {
+        unsigned int max_retries_copy = max_retries;
+    }
+    
+    while(unlikely(sem_post(&shutdown_arrays_semaphore) < 0)) // All of these functions return 0 on success
+    {
+        if (unlikely(!max_retries_copy--))
+        {
+            P("sem_post() failed to release semaphore after max_retries retries");
+            pthread_exit(NULL);
+        }
+        PSE("sem_post() failed to release semaphore");
+        sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
+        continue; // Try again
+    }
 }
 
 /**
