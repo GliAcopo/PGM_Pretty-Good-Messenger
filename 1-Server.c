@@ -75,6 +75,8 @@ static volatile sig_atomic_t shutdown_now = 0;
 
 static void lock_shutdown_arrays_or_exit(unsigned int max_retries);
 static void unlock_shutdown_arrays_or_exit(unsigned int max_retries);
+static int sanitize_username(const char *value);
+static int sanitize_filename(const char *value);
 
 /**
  * @brief 
@@ -346,6 +348,10 @@ static ERROR_CODE add_loggedin_user(const char *username, int *out_index)
     if (unlikely(username == NULL || out_index == NULL))
     {
         return NULL_PARAMETERS;
+    }
+    if (unlikely(!sanitize_username(username)))
+    {
+        return ERROR;
     }
 
     lock_loggedin_users_or_exit();
@@ -670,7 +676,8 @@ static char *build_list_of_registered_users(size_t *output_length) // We use a p
 
 
 /**
- * @brief Function that validates the username provided and returns 1 if the username does not contain any invalid patterns like "..", "/" or "\" and is not empty, otherwise it returns 0
+ * @brief Function that validates the username with a whitelist policy.
+ *        Allowed chars are [A-Za-z0-9_-]. Returns 1 if valid, 0 otherwise.
  * 
  * @param value pointer to the null terminated string that contains the username to validate
  * @return int 1 if the username is valid, 0 otherwise
@@ -681,14 +688,22 @@ static int sanitize_username(const char *value)
     {
         return 0;
     }
-    if (strstr(value, "..") != NULL) // LINUX MAN: The strstr() function finds the first occurrence of the substring needle in the string haystack.  The terminating null bytes ('\0') are not compared.
+    size_t value_length = strlen(value);
+    if (value_length >= USERNAME_SIZE_CHARS)
     {
+        PIE("Username length is invalid: %zu", value_length);
         return 0;
     }
     for (const char *cursor = value; *cursor != '\0'; cursor++) // We slide the string forward cheking every character
     {
-        if (*cursor == '/' || *cursor == '\\')
+        unsigned char c = (unsigned char)*cursor;
+        int is_lower = (c >= (unsigned char)'a' && c <= (unsigned char)'z');
+        int is_upper = (c >= (unsigned char)'A' && c <= (unsigned char)'Z');
+        int is_digit = (c >= (unsigned char)'0' && c <= (unsigned char)'9');
+        int is_symbol = (c == (unsigned char)'_' || c == (unsigned char)'-');
+        if (!(is_lower || is_upper || is_digit || is_symbol))
         {
+            PIE("Invalid character in username: '%c'", c);
             return 0;
         }
     }
@@ -705,21 +720,31 @@ static int sanitize_filename(const char *value)
 {
     if ((value == NULL || value[0] == '\0'))
     {
+        PIE("Filename is null or empty");
         return 0;
     }
-    if (strstr(value, "..") != NULL) // LINUX MAN: The strstr() function finds the first occurrence of the substring needle in the string haystack.  The terminating null bytes ('\0') are not compared.
+    size_t value_length = strlen(value);
+    if (value_length == 0 || value_length >= NAME_MAX) // name of the file shoud be more than 0 chars and less than the possible file lenght in unix
     {
+        PIE("Filename length is invalid: %zu", value_length);
         return 0;
     }
     for (const char *cursor = value; *cursor != '\0'; cursor++) // We slide the string forward cheking every character
     {
-        if (*cursor == '/' || *cursor == '\\')
+        unsigned char c = (unsigned char)*cursor;
+        int is_lower = (c >= (unsigned char)'a' && c <= (unsigned char)'z');
+        int is_upper = (c >= (unsigned char)'A' && c <= (unsigned char)'Z');
+        int is_digit = (c >= (unsigned char)'0' && c <= (unsigned char)'9');
+        int is_symbol = (c == (unsigned char)'_' || c == (unsigned char)'-');
+        if (!(is_lower || is_upper || is_digit || is_symbol))
         {
+            PIE("Invalid character in filename: '%c'", c);
             return 0;
         }
     }
     if (!ends_with(value, file_suffix_user_data))
     {
+        PIE("Filename does not end with expected suffix: %s", file_suffix_user_data);
         return 0;
     }
     return 1;
@@ -976,7 +1001,7 @@ void *signal_handler_thread(void *arg)
             {
                 PSE("Failed to shutdown socket, doing nothing instead");
             }
-            if(unlikely(close(server_socket_fd) < 0)) // Closing the server socket will cause the accept() call in the main thread to fail and thus allow the server to shutdown gracefully
+            if(unlikely(close(skt_fd) < 0)) // Closing the server socket will cause the accept() call in the main thread to fail and thus allow the server to shutdown gracefully
             {
                 PSE("Failed to close server socket, doing nothing instead");
             }
@@ -1035,8 +1060,18 @@ void *thread_routine(void *arg)
         goto cleanup;
     }
     login_env.sender[USERNAME_SIZE_CHARS - 1] = '\0';                     // Defensive null-termination
-    login_env.sender[strcspn(login_env.sender, "\n")] = '\0';           // Strip newline if present @note: \r for Windows compatibility not needed
+    login_env.sender[strcspn(login_env.sender, "\r\n")] = '\0';           // Strip newline if present
     P("[%d]::: Read username [%s]", connection_fd, login_env.sender);
+    if (unlikely(!sanitize_username(login_env.sender)))
+    {
+        response_code = ERROR;
+        P("[%d]::: Invalid username rejected [%s]", connection_fd, login_env.sender);
+        if (unlikely(send_all(connection_fd, &response_code, sizeof(response_code)) < 0))
+        {
+            PSE("::: Failed to send invalid username response for connection fd: %d", connection_fd);
+        }
+        goto cleanup;
+    }
 
     //  2) Decide whether to register or authenticate
     size_t user_dir_len = strlen(login_env.sender) + strlen(folder_suffix_user) + 1;
