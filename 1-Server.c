@@ -47,7 +47,6 @@ static char *current_loggedin_users[MAX_BACKLOG] = {0}; // Array of pointers to 
 static unsigned int current_loggedin_users_bitmap = 0;  // Which slots in the current_loggedin_users array are used, bit i is 1 if current_loggedin_users[i] contains the name of a loggedin user
 static sem_t current_loggedin_users_semaphore;
 
-
 // SHUTDOWN HANDLING
 static size_t number_of_current_logged_in_users = 0;
 // The thread id array in which we store the thread ids for joining when shutting down
@@ -56,6 +55,8 @@ static pthread_t thread_id_array[MAX_BACKLOG] = {0};
 static int connections_array[MAX_BACKLOG] = {0};
 // Semaphore for the THREE above:
 static sem_t shutdown_arrays_semaphore;
+// Socket file descriptor of the main loop that accepts connections, needs to be global so that the signal handler can close it when needed
+static sig_atomic_t skt_fd = 0; // sig_atomic_t: An integer type which can be accessed as an atomic entity even in the presence of asynchronous interrupts made by signals.
 
 // ierror, an internal debug substitute to errno when needed
 ERROR_CODE ierrno = NO_ERROR;
@@ -668,18 +669,23 @@ static char *build_list_of_registered_users(size_t *output_length) // We use a p
 }
 
 
-
+/**
+ * @brief Function that validates the username provided and returns 1 if the username does not contain any invalid patterns like "..", "/" or "\" and is not empty, otherwise it returns 0
+ * 
+ * @param value pointer to the null terminated string that contains the username to validate
+ * @return int 1 if the username is valid, 0 otherwise
+ */
 static int sanitize_username(const char *value)
 {
     if (value == NULL || value[0] == '\0')
     {
         return 0;
     }
-    if (strstr(value, "..") != NULL)
+    if (strstr(value, "..") != NULL) // LINUX MAN: The strstr() function finds the first occurrence of the substring needle in the string haystack.  The terminating null bytes ('\0') are not compared.
     {
         return 0;
     }
-    for (const char *cursor = value; *cursor != '\0'; cursor++)
+    for (const char *cursor = value; *cursor != '\0'; cursor++) // We slide the string forward cheking every character
     {
         if (*cursor == '/' || *cursor == '\\')
         {
@@ -689,17 +695,23 @@ static int sanitize_username(const char *value)
     return 1;
 }
 
+/**
+ * @brief Function that validates the filename provided and returns 1 if the filename does not contain any invalid patterns like "..", "/" or "\" and is not empty and ends with the expected suffix, otherwise it returns 0
+ * 
+ * @param value pointer to the null terminated string that contains the filename to validate
+ * @return int 1 if the filename is valid, 0 otherwise
+ */
 static int sanitize_filename(const char *value)
 {
-    if (value == NULL || value[0] == '\0')
+    if ((value == NULL || value[0] == '\0'))
     {
         return 0;
     }
-    if (strstr(value, "..") != NULL)
+    if (strstr(value, "..") != NULL) // LINUX MAN: The strstr() function finds the first occurrence of the substring needle in the string haystack.  The terminating null bytes ('\0') are not compared.
     {
         return 0;
     }
-    for (const char *cursor = value; *cursor != '\0'; cursor++)
+    for (const char *cursor = value; *cursor != '\0'; cursor++) // We slide the string forward cheking every character
     {
         if (*cursor == '/' || *cursor == '\\')
         {
@@ -960,6 +972,14 @@ void *signal_handler_thread(void *arg)
         if (sig == SIGINT || sig == SIGTERM)
         {
             P("Received shutdown signal, shutting down server...");
+            if(unlikely(shutdown(skt_fd, SHUT_RDWR) < 0))
+            {
+                PSE("Failed to shutdown socket, doing nothing instead");
+            }
+            if(unlikely(close(server_socket_fd) < 0)) // Closing the server socket will cause the accept() call in the main thread to fail and thus allow the server to shutdown gracefully
+            {
+                PSE("Failed to close server socket, doing nothing instead");
+            }
             shutdown_now = 1;
             break;
         }
@@ -2236,7 +2256,7 @@ int main(int argc, char** argv)
     // START SOCKET SERVER HERE
     // Creating a socket for internet communication using domain:IPv4 ; type:TCP ; protocol: default(0) 
     P("Creating socket...");
-    int skt_fd;
+    // int skt_fd; MOVED TO THE START OF THE DOCUMENT (GLOBAL VALUE) TO ALLOW THE SIGNAL HANDLER TO CLOSE IT AND WAKE UP THE ACCEPT CALL IN CASE OF SHUTDOWN
     if(unlikely((skt_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)) // theoretically socket() can return 0, but it's very unlikely, and won't happen in this situation (0 is used for stdin) and it is not a problem anyway
     {
         PSE("Socket creation failed");
@@ -2324,6 +2344,11 @@ int main(int argc, char** argv)
     // Block signals and make them be handled by the signal thread
     pthread_t signal_thread_id;
     sigset_t set; // signal mask
+    if (unlikely(sigemptyset(&set) != 0)) // Initialize the signal set to empty, so that no signals are blocked by default
+    {
+        PSE("Failed to initialize signal set");
+        E();
+    }
     // Block both signals
     sigaddset(&set, SIGINT); // MAN sigaddset() and sigdelset() add and delete respectively signal signum from set. -NOT-> sigfillset() initializes set to full, including all signals.
     sigaddset(&set, SIGTERM);
