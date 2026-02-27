@@ -72,6 +72,9 @@ static volatile sig_atomic_t shutdown_now = 0;
 /*                                          HELPER FUNCTIONS                                                     */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
+static void lock_shutdown_arrays_or_exit(unsigned int max_retries);
+static void unlock_shutdown_arrays_or_exit(unsigned int max_retries);
+
 /**
  * @brief 
  * 
@@ -85,38 +88,18 @@ static void exit_thread_and_update_thread_id_array(int thread_index)
         pthread_exit(NULL);
     }
 
-    unsigned int max_retries = 5;
-    while(unlikely(sem_wait(&shutdown_arrays_semaphore) < 0)) // All of these functions return 0 on success
+    lock_shutdown_arrays_or_exit(5);
+    if (number_of_current_logged_in_users > 0)
     {
-        if (unlikely(!max_retries--))
-        {
-            P("sem_wait() failed to aquire semaphore after max_retries retries");
-            pthread_exit(NULL);
-        }
-        PSE("sem_wait() failed to aquire semaphore");
-        sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
-        continue; // Try again
+        number_of_current_logged_in_users--; // Decrement active worker count
     }
-
-    if(!number_of_current_logged_in_users--) // Decrement the count of logged in users since this thread is exiting
+    else
     {
-        P("Warning: number_of_current_logged_in_users is already 0 when exiting thread, this should not happen");
-        number_of_current_logged_in_users = 0;
+        P("Warning: number_of_current_logged_in_users is already 0 when exiting thread");
     }
-    thread_id_array[thread_index] = 0;  // Clear the thread id from the array
+    thread_id_array[thread_index] = 0;   // Clear the thread id from the array
     connections_array[thread_index] = 0; // Clear the connection fd from the array
-
-    while(unlikely(sem_post(&shutdown_arrays_semaphore) < 0))
-    {
-        PSE("sem_post() failed to release semaphore");
-        if (unlikely(!max_retries--))
-        {
-            P("sem_post() failed to release semaphore after max_retries retries");
-            pthread_exit(NULL);
-        }
-        sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
-        continue; // Try again
-    }
+    unlock_shutdown_arrays_or_exit(5);
     pthread_exit(NULL);
 }
 
@@ -125,24 +108,24 @@ static void exit_thread_and_update_thread_id_array(int thread_index)
  * 
  * @param max_retries 
  */
-void lock_shutdown_arrays_or_exit(unsigned int max_retries)
+static void lock_shutdown_arrays_or_exit(unsigned int max_retries)
 {
     if (unlikely(max_retries == 0))
     {
         P("Invalid max_retries for lock_shutdown_arrays_or_exit: %u", max_retries);
-        unsigned int max_retries = 5;
+        max_retries = 5;
     }
     else
     {
-        unsigned int max_retries_copy = max_retries;
+        max_retries = max_retries;
     }
-    
-    while(unlikely(sem_wait(&shutdown_arrays_semaphore) < 0)) // All of these functions return 0 on success
+
+    while(unlikely(sem_wait(&shutdown_arrays_semaphore) < 0))
     {
-        if (unlikely(!max_retries_copy--))
+        if (unlikely(!max_retries--))
         {
             P("sem_wait() failed to aquire semaphore after max_retries retries");
-            pthread_exit(NULL);
+            E();
         }
         PSE("sem_wait() failed to aquire semaphore");
         sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
@@ -155,24 +138,16 @@ void lock_shutdown_arrays_or_exit(unsigned int max_retries)
  * 
  * @param max_retries 
  */
-void unlock_shutdown_arrays_or_exit(unsigned int max_retries)
+static void unlock_shutdown_arrays_or_exit(unsigned int max_retries)
 {
-    if (unlikely(max_retries == 0))
-    {
-        P("Invalid max_retries for unlock_shutdown_arrays_or_exit: %u", max_retries);
-        unsigned int max_retries = 5;
-    }
-    else
-    {
-        unsigned int max_retries_copy = max_retries;
-    }
-    
+    unsigned int max_retries_copy = (max_retries == 0) ? 5u : max_retries;
+
     while(unlikely(sem_post(&shutdown_arrays_semaphore) < 0)) // All of these functions return 0 on success
     {
         if (unlikely(!max_retries_copy--))
         {
             P("sem_post() failed to release semaphore after max_retries retries");
-            pthread_exit(NULL);
+            E();
         }
         PSE("sem_post() failed to release semaphore");
         sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
@@ -2398,8 +2373,11 @@ int main(int argc, char** argv)
         }
         P("Connection accepted from IP: %s, Port: %d, New socket file descriptor: %d", inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port), new_connection);
         
-        // Close connection if the max number of logged in users is reached
-        if (number_of_current_logged_in_users >= MAX_BACKLOG)
+        // Close connection if the max number of active workers is reached
+        lock_shutdown_arrays_or_exit(5);
+        int at_capacity = (number_of_current_logged_in_users >= MAX_BACKLOG);
+        unlock_shutdown_arrays_or_exit(5);
+        if (at_capacity)
         {
             P("Maximum number of logged in users reached, rejecting connection from IP: %s, Port: %d", inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port));
             close(new_connection);
@@ -2407,8 +2385,16 @@ int main(int argc, char** argv)
         }
 
         // CHECK IF SLOT IS FREE: ---------------------------------------
-        while (thread_id_array[thread_args_connections_index] != 0)
+        while (1)
         {
+            lock_shutdown_arrays_or_exit(5);
+            int slot_busy = (thread_id_array[thread_args_connections_index] != 0);
+            unlock_shutdown_arrays_or_exit(5);
+            if (!slot_busy) // If the slot is not busy we can use it
+            {
+                break;
+            }
+
             PSE("Thread id array index %zu is not 0, a thread is already running on this index", thread_args_connections_index);
             thread_args_connections_index = ((thread_args_connections_index + 1) % MAX_BACKLOG);
             if (shutdown_now)
@@ -2416,7 +2402,7 @@ int main(int argc, char** argv)
                 P("Shutdown variable set, stopping main thread server...");
                 break;
             }
-            sched_yield(); // Yield the CPU to let threads run and finish
+            sched_yield(); // Yield the CPU to let threads run and finish to free the slots
             /*
             close(new_connection);
             free(thread_args);
@@ -2434,32 +2420,40 @@ int main(int argc, char** argv)
         }
         thread_args->connection_fd = new_connection;
         thread_args->thread_index = thread_args_connections_index;
+        lock_shutdown_arrays_or_exit(5);
         connections_array[thread_args_connections_index] = new_connection;
+        unlock_shutdown_arrays_or_exit(5);
         
         if (shutdown_now)
         {
             P("Shutdown variable set, stopping main thread server...");
+            lock_shutdown_arrays_or_exit(5);
+            connections_array[thread_args_connections_index] = 0;
+            unlock_shutdown_arrays_or_exit(5);
+            close(new_connection);
+            free(thread_args);
             break;
         }
-        if (unlikely(pthread_create(&thread_id_array[thread_args_connections_index], NULL, thread_routine, (void *)thread_args) != 0))
+        lock_shutdown_arrays_or_exit(5);
+        int create_rc = pthread_create(&thread_id_array[thread_args_connections_index], NULL, thread_routine, (void *)thread_args);
+        if (unlikely(create_rc != 0))
         {
             PSE("Failed to create thread for connection fd: %d", new_connection);
+            connections_array[thread_args_connections_index] = 0; // Clear the connection fd from the array
+            unlock_shutdown_arrays_or_exit(5); // UNLOCK HERE AND IN THE ELSE STATEMENT
             // We close the connection since we cannot handle it
             close(new_connection);
-            connections_array[thread_args_connections_index] = 0; // Clear the connection fd from the array
             free(thread_args);
         }
         else
         {
+            number_of_current_logged_in_users++;
+            pthread_t created_thread_id = thread_id_array[thread_args_connections_index];
+            unlock_shutdown_arrays_or_exit(5); // UNLOCK HERE LIKE SAID ABOVE
             // Successfully created thread, increment the index in a circular manner
-            P("Thread [%lu] created successfully for connection fd: %d\n", (unsigned long)thread_id_array[thread_args_connections_index], new_connection);
-            // Add new connection to the connections array for later closing when shutting down the server
-            connections_array[thread_args_connections_index] = new_connection;
+            P("Thread [%lu] created successfully for connection fd: %d\n", (unsigned long)created_thread_id, new_connection);
             // Increment index
             thread_args_connections_index = ((thread_args_connections_index + 1) % MAX_BACKLOG); // Conversion to silence gcc -> actually gcc was right
-            // Add another user to the count of logged in users, we do this after creating the thread to be sure that the thread will actually handle the connection and increment the count of logged in users, otherwise we may end up with a situation where we have a thread that is not handling any connection but is still counted as a logged in user, which would prevent new connections from being accepted
-            number_of_current_logged_in_users++;
-
         }
         // close(new_connection); It's the thread's resposibility to close the socket when done
     }
@@ -2477,35 +2471,11 @@ int main(int argc, char** argv)
     pthread_t thread_id_array_copy[MAX_BACKLOG] = {0};
     int connections_array_copy[MAX_BACKLOG] = {0};
 
-    // AQUIRING SEMAPHORE
-    unsigned int max_retries = 5;
-    while(unlikely(sem_wait(&shutdown_arrays_semaphore) < 0)) // All of these functions return 0 on success
-    {
-        if (unlikely(!max_retries--))
-        {
-            P("sem_wait() failed to aquire semaphore after max_retries retries");
-            pthread_exit(NULL);
-        }
-        PSE("sem_wait() failed to aquire semaphore");
-        sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
-        continue; // Try again
-    }
-
-    // Copy the thread id array and the connections so that we still know wich threads were active when we started shutting down, since the original arrays will be modified by the threads when they finish and set their id to 0 and their connection to 0
+    // Copy the thread id array and the connections to not incur in data racing when shutting down
+    lock_shutdown_arrays_or_exit(5);
     memcpy(thread_id_array_copy, thread_id_array, sizeof(thread_id_array));
     memcpy(connections_array_copy, connections_array, sizeof(connections_array));
-
-    while(unlikely(sem_post(&shutdown_arrays_semaphore) < 0))
-    {
-        PSE("sem_post() failed to release semaphore");
-        if (unlikely(!max_retries--))
-        {
-            P("sem_post() failed to release semaphore after max_retries retries");
-            pthread_exit(NULL);
-        }
-        sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
-        continue; // Try again
-    }
+    unlock_shutdown_arrays_or_exit(5);
 
     for (unsigned int i = 0; i < MAX_BACKLOG; i++) 
     {
