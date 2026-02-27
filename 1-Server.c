@@ -29,6 +29,9 @@
 #include <time.h>       // clock_gettime
 #include <stdint.h>     // uint32_t
 #include <stddef.h>     // offsetof
+#include <string.h>     // strcmp, strncmp, strlen, memcpy, strstr
+#include <errno.h>      // errno, EINTR, ETIMEDOUT
+#include <signal.h>     // sigset_t, sigwait, SIGINT, SIGTERM
 // #include <linux/if_link.h> // IFLA_ADDRESS
 
 
@@ -39,27 +42,30 @@
 // Also used as the maximum number of logged in users / worker threads active at a time
 #define MAX_BACKLOG 10
 
-volatile static size_t number_of_current_logged_in_users = 0;
-
-static char *current_loggedin_users[MAX_BACKLOG] = {0};
-static unsigned int current_loggedin_users_bitmap = 0;
+// CURRENT LOGGED IN USERS HANDLING
+static char *current_loggedin_users[MAX_BACKLOG] = {0}; // Array of pointers to the usernames of the currently logged in users, if a slot is NULL, then it is free, otherwise it contains the username of the logged in user. WARNING: the index of the slot is NOT used to identify the user in other arrays (thread_id_array and connections_array)
+static unsigned int current_loggedin_users_bitmap = 0;  // Which slots in the current_loggedin_users array are used, bit i is 1 if current_loggedin_users[i] contains the name of a loggedin user
 static sem_t current_loggedin_users_semaphore;
 
-// The thread id array in which we store the thread ids for late joining when shutting down
-static volatile pthread_t thread_id_array[MAX_BACKLOG] = {0};
 
+// SHUTDOWN HANDLING
+static size_t number_of_current_logged_in_users = 0;
+// The thread id array in which we store the thread ids for joining when shutting down
+static pthread_t thread_id_array[MAX_BACKLOG] = {0};
 // The array of the connection file descriptors to close all the connections
-static volatile int connections_array[MAX_BACKLOG] = {0};
+static int connections_array[MAX_BACKLOG] = {0};
+// Semaphore for the THREE above:
+static sem_t shutdown_arrays_semaphore;
 
-// ierror, an internal debug substitute to errno
+// ierror, an internal debug substitute to errno when needed
 ERROR_CODE ierrno = NO_ERROR;
 
 // Default port to use in the server (can be overridden by argv or PGM_SERVER_PORT)
-const int32_t DEFAULT_PORT_NUMBER = 6666; // log_2(65535) = 16 bits, 16-1= 15 (sign) so (to be sure) I decided to use a 32 bit 
-const char *server_port_env = "PGM_SERVER_PORT";
+static const int32_t DEFAULT_PORT_NUMBER = 6666; // log_2(65535) = 16 bits, 16-1= 15 (sign) so (to be sure) I decided to use a 32 bit 
+static const char *server_port_env = "PGM_SERVER_PORT";
 
-// Sentry variable to shut down the server when needed, 0 false 1 true
-volatile sig_atomic_t shutdown_now = 0;
+// Variable to shut down the server when needed, 0 false 1 true
+static volatile sig_atomic_t shutdown_now = 0;
 
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
@@ -73,9 +79,39 @@ static void exit_thread_and_update_thread_id_array(int thread_index)
         P("Invalid thread index for exit_thread_and_update_thread_id_array: %d", thread_index);
         pthread_exit(NULL);
     }
-    number_of_current_logged_in_users--; // Decrement the count of logged in users since this thread is exiting
+
+    unsigned int max_retries = 5;
+    while(unlikely(sem_wait(&shutdown_arrays_semaphore) < 0)) // All of these functions return 0 on success
+    {
+        if (unlikely(!max_retries--))
+        {
+            P("sem_wait() failed to aquire semaphore after max_retries retries");
+            pthread_exit(NULL);
+        }
+        PSE("sem_wait() failed to aquire semaphore");
+        sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
+        continue; // Try again
+    }
+
+    if(!number_of_current_logged_in_users--) // Decrement the count of logged in users since this thread is exiting
+    {
+        P("Warning: number_of_current_logged_in_users is already 0 when exiting thread, this should not happen");
+        number_of_current_logged_in_users = 0;
+    }
     thread_id_array[thread_index] = 0;  // Clear the thread id from the array
     connections_array[thread_index] = 0; // Clear the connection fd from the array
+
+    while(unlikely(sem_post(&shutdown_arrays_semaphore) < 0))
+    {
+        PSE("sem_post() failed to release semaphore");
+        if (unlikely(!max_retries--))
+        {
+            P("sem_post() failed to release semaphore after max_retries retries");
+            pthread_exit(NULL);
+        }
+        sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
+        continue; // Try again
+    }
     pthread_exit(NULL);
 }
 
@@ -571,7 +607,7 @@ static char *build_list_of_registered_users(size_t *output_length) // We use a p
 
     if (bytes_used + 1 > buffer_capacity)
     {
-        PE("NO ROOM FOR NULL TERMINATOR!");
+        PSE("NO ROOM FOR NULL TERMINATOR!");
         
         char *reallocated_list = realloc(user_list_buffer, bytes_used + 1);
         if (reallocated_list == NULL)
@@ -697,7 +733,7 @@ static char **collect_message_files(const char *user_directory_path, int only_un
 {
     if (unlikely(output_file_count == NULL || user_directory_path == NULL)) // input check
     {
-        ierror = NULL_PARAMETERS;
+        ierrno = NULL_PARAMETERS;
         PIE("Invalid parameters for collect_message_files");
         return NULL;
     }
@@ -2122,12 +2158,24 @@ int main(int argc, char** argv)
     fprintf(stdout, "%s", ascii_art);
     fprintf(stdout, "Program name: %s\n", program_name);
 
-    if (unlikely(sem_init(&current_loggedin_users_semaphore, 0, 1) == -1))
+    /* -------------------------------------------------------------------------- */
+    /*                             SEMAPHORE HANDLING                             */
+    /* -------------------------------------------------------------------------- */
+
+    if (unlikely(sem_init(&current_loggedin_users_semaphore, 0, 1) == -1)) // LUX MAN: int sem_init(sem_t *sem, int pshared, unsigned int value) initializes the unnamed semaphore at the address pointed to by sem.  The value argument specifies the initial value for the semaphore.
     {
         PSE("sem_init() failed for current_loggedin_users_semaphore");
         E();
     }
+    if (unlikely(sem_init(&shutdown_arrays_semaphore, 0, 1) == -1))
+    {
+        PSE("sem_init() failed for shutdown_arrays_semaphore");
+        E();
+    }
 
+    /* -------------------------------------------------------------------------- */
+    /*                           MAIN ARGUMENT HANDLING                           */
+    /* -------------------------------------------------------------------------- */
     int32_t port_number = DEFAULT_PORT_NUMBER;
     const char *env_port = getenv(server_port_env);
     if (env_port != NULL)
@@ -2140,6 +2188,10 @@ int main(int argc, char** argv)
         P("Port from argument: %s", argv[1]);
         port_number = parse_port_string(argv[1], port_number);
     }
+
+    /* -------------------------------------------------------------------------- */
+    /*                               SOCKET HANDLING                              */
+    /* -------------------------------------------------------------------------- */
 
     // START SOCKET SERVER HERE
     // Creating a socket for internet communication using domain:IPv4 ; type:TCP ; protocol: default(0) 
@@ -2217,7 +2269,7 @@ int main(int argc, char** argv)
     P("Socket listening successfully! Max backlog: %d", MAX_BACKLOG);
 
     /* -------------------------------------------------------------------------- */
-    /*                               Signal handling                              */
+    /*                               SIGNAL HANDLING                              */
     /* -------------------------------------------------------------------------- */
 
     /* No forks were made so we do not worry about childs
@@ -2233,8 +2285,8 @@ int main(int argc, char** argv)
     pthread_t signal_thread_id;
     sigset_t set; // signal mask
     // Block both signals
-    sigfillset(&set, SIGINT); 
-    sigfillset(&set, SIGTERM);
+    sigaddset(&set, SIGINT); // MAN sigaddset() and sigdelset() add and delete respectively signal signum from set. -NOT-> sigfillset() initializes set to full, including all signals.
+    sigaddset(&set, SIGTERM);
     if (unlikely(pthread_sigmask(SIG_BLOCK, &set, NULL) != 0)) // LINUX MAN: A new thread inherits a copy of its creator's signal mask.
     {
         PSE("Failed to block signals in main thread");
@@ -2346,6 +2398,11 @@ int main(int argc, char** argv)
         }
         // close(new_connection); It's the thread's resposibility to close the socket when done
     }
+
+    /* -------------------------------------------------------------------------- */
+    /*                               CLOSING SERVER:                              */
+    /* -------------------------------------------------------------------------- */
+
     // I need to close the listening socket to unblock the accept() call in case it is blocking, so that the server can shutdown gracefully
     P("\t------------------------------------------------------------------");
     P("\tClosing server NOW!");
@@ -2354,8 +2411,36 @@ int main(int argc, char** argv)
     // Copy the thread id array and the connections so that we still know wich threads were active when we started shutting down, since the original arrays will be modified by the threads when they finish and set their id to 0 and their connection to 0
     pthread_t thread_id_array_copy[MAX_BACKLOG] = {0};
     int connections_array_copy[MAX_BACKLOG] = {0};
+
+    // AQUIRING SEMAPHORE
+    unsigned int max_retries = 5;
+    while(unlikely(sem_wait(&shutdown_arrays_semaphore) < 0)) // All of these functions return 0 on success
+    {
+        if (unlikely(!max_retries--))
+        {
+            P("sem_wait() failed to aquire semaphore after max_retries retries");
+            pthread_exit(NULL);
+        }
+        PSE("sem_wait() failed to aquire semaphore");
+        sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
+        continue; // Try again
+    }
+
+    // Copy the thread id array and the connections so that we still know wich threads were active when we started shutting down, since the original arrays will be modified by the threads when they finish and set their id to 0 and their connection to 0
     memcpy(thread_id_array_copy, thread_id_array, sizeof(thread_id_array));
     memcpy(connections_array_copy, connections_array, sizeof(connections_array));
+
+    while(unlikely(sem_post(&shutdown_arrays_semaphore) < 0))
+    {
+        PSE("sem_post() failed to release semaphore");
+        if (unlikely(!max_retries--))
+        {
+            P("sem_post() failed to release semaphore after max_retries retries");
+            pthread_exit(NULL);
+        }
+        sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
+        continue; // Try again
+    }
 
     for (unsigned int i = 0; i < MAX_BACKLOG; i++) 
     {
