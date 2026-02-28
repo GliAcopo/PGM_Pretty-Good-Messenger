@@ -11,6 +11,7 @@
 
 #include "3-Global-Variables-and-Functions.h" 
 #include <unistd.h>
+#include <sys/socket.h>
 
 // ierror, an internal debug substitute to errno
 //ERROR_CODE ierrno = NO_ERROR;
@@ -54,6 +55,66 @@ const char *convert_error_code_to_string(const ERROR_CODE code)
     default:
         return "UNKNOWN_ERROR_CODE";
     }
+}
+
+int send_all(int fd, const void *buffer, size_t length)
+{
+    const char *p = (const char *)buffer;
+    size_t left = length;
+
+    while (left)
+    {
+        const ssize_t n = send(fd, p, left, MSG_NOSIGNAL);
+
+        if (likely(n > 0))
+        {
+            p += n;
+            left -= (size_t)n;
+            continue;
+        }
+
+        if (n == 0)
+        {
+            return -1;
+        }
+
+        if (unlikely(errno == EINTR))
+        {
+            continue;
+        }
+
+        return -1;
+    }
+
+    return 0;
+}
+
+int recv_all(int fd, void *buffer, size_t length)
+{
+    char *p = (char *)buffer;
+    size_t left = length;
+
+    while (left)
+    {
+        const ssize_t n = recv(fd, p, left, 0);
+
+        if (likely(n > 0))
+        {
+            p += n;
+            left -= (size_t)n;
+            continue;
+        }
+
+        if (n == 0)
+            return 0;
+
+        if (errno == EINTR)
+            continue;
+
+        return -1;
+    }
+
+    return 1;
 }
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */

@@ -34,83 +34,6 @@
 // ierror, an internal debug substitute to errno
 ERROR_CODE ierrno = NO_ERROR;
 
-/**
- * @brief send() wrapper that guarantees the whole buffer is transmitted on a TCP stream socket
- *
- * @param fd connected socket file descriptor
- * @param buffer bytes to send
- * @param length how many bytes must be sent before returning success
- * @return 0 on success, -1 on error/peer-closed condition
- */
-static int send_all(int fd, const void *buffer, size_t length)
-{
-	const char *cursor = buffer;
-	size_t remaining = length;
-	// Important: on TCP sockets send() is not guaranteed to send the full buffer in one call.
-	// We keep sending from where we stopped until the requested byte count is fully transmitted.
-	while (remaining > 0)
-	{
-		ssize_t sent = send(fd, cursor, remaining, 0);
-		if (unlikely(sent < 0))
-		{
-			// EINTR means the syscall was interrupted by a signal.
-			// In this case retrying is the correct behavior.
-			if (unlikely(errno == EINTR))
-			{
-				continue;
-			}
-			return -1;
-		}
-		// If send() returns 0 here, no progress was made.
-		// Treat it as failure, otherwise the loop could spin forever.
-		if (unlikely(sent == 0))
-		{
-			return -1;
-		}
-		cursor += sent;
-		remaining -= (size_t)sent;
-	}
-	return 0;
-}
-
-/**
- * @brief recv() wrapper that reads exactly @p length bytes unless peer closes the connection
- *
- * @param fd connected socket file descriptor
- * @param buffer destination buffer
- * @param length required number of bytes
- * @return 1 when all bytes are received, 0 when peer closes before completion, -1 on syscall error
- */
-static int recv_all(int fd, void *buffer, size_t length)
-{
-	char *cursor = buffer;
-	size_t remaining = length;
-	// Important: recv() can return fewer bytes than requested even when the connection is healthy.
-	// We keep reading until we collect exactly the amount requested by the caller.
-	while (remaining > 0)
-	{
-		ssize_t recvd = recv(fd, cursor, remaining, 0);
-		if (unlikely(recvd < 0))
-		{
-			// EINTR: interrupted by signal, retry safely.
-			if (unlikely(errno == EINTR))
-			{
-				continue;
-			}
-			return -1;
-		}
-		// recv()==0 means peer closed the connection (EOF on socket).
-		// Caller can decide whether this is expected or an error for current phase.
-		if (unlikely(recvd == 0))
-		{
-			return 0;
-		}
-		cursor += recvd;
-		remaining -= (size_t)recvd;
-	}
-	return 1;
-}
-
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              MESSAGE STRUCT CREATION                                          */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
@@ -191,7 +114,7 @@ int main(int argc, char** argv)
 	/* -------------------------------------------------------------------------- */
 	/*                            GET THE USERNAME                                */
 	/* -------------------------------------------------------------------------- */
-	LOGIN_SESSION_ENVIRONMENT env;
+	LOGIN_SESSION_ENVIRONMENT env = {0};
 
 	P(">>> argc = %d", argc);
 
@@ -354,12 +277,13 @@ int main(int argc, char** argv)
 
 		P("[%s] >>> Sending username: %s", env.sender, username);
 
-		// We send strlen(username) + 1 so that the terminating '\0' is sent too.
-		// This lets the server safely treat the payload as a standard C string.
-		ssize_t sent = send(sockfd, username, strlen(username) + 1, 0);
-		if (unlikely(sent < 0))
+		// Server login path expects fixed-size buffers for username/password.
+		// For this handshake only, we send a constant-size zero-padded buffer.
+		char username_fixed[USERNAME_SIZE_CHARS] = {0};
+		snprintf(username_fixed, sizeof(username_fixed), "%s", username);
+		if (unlikely(send_all(sockfd, username_fixed, sizeof(username_fixed)) < 0))
 		{
-			PSE("[%s] >>> send()", env.sender);
+			PSE("[%s] >>> Failed to send fixed-size username", env.sender);
 			close(sockfd);
 			return(1);
 		}
@@ -383,7 +307,7 @@ int main(int argc, char** argv)
 		if (unlikely(server_code == START_REGISTRATION)) // registration path
 		{
 			// Registration path: server did not find this user and asks for initial password setup.
-			char password[PASSWORD_SIZE_CHARS];
+			char password[PASSWORD_SIZE_CHARS] = {0};
 			printf("User not found, please register.\nInsert new password:\n>");
 			// Prompt ends with '>' (no newline), so flush manually before reading input.
 			fflush(stdout);
@@ -404,11 +328,10 @@ int main(int argc, char** argv)
 			}
 			password[strcspn(password, "\n")] = '\0';
 
-			// Same framing used for username: include terminating '\0' so server reads a full C string.
-			sent = send(sockfd, password, strlen(password) + 1, 0);
-			if (unlikely(sent < 0))
+			// Server expects a fixed-size password buffer during registration handshake.
+			if (unlikely(send_all(sockfd, password, sizeof(password)) < 0))
 			{
-				PSE("[%s] >>> Failed to send registration password", env.sender);
+				PSE("[%s] >>> Failed to send fixed-size registration password", env.sender);
 				close(sockfd);
 				return(1);
 			}
@@ -436,9 +359,10 @@ int main(int argc, char** argv)
 
 			int attempt = 0;
 			int authenticated = 0;
-			char password[PASSWORD_SIZE_CHARS];
+			char password[PASSWORD_SIZE_CHARS] = {0};
 
 			while (attempt < MAX_PASSWORD_ATTEMPTS && !authenticated) {
+				memset(password, 0, sizeof(password));
 				printf("Insert password:\n>");
 				// Flush prompt before blocking on stdin, for the same reason explained above.
 				fflush(stdout);
@@ -459,11 +383,10 @@ int main(int argc, char** argv)
 				}
 				password[strcspn(password, "\n")] = '\0';
 
-				// Same protocol framing: send password as null-terminated C string.
-				sent = send(sockfd, password, strlen(password) + 1, 0);
-				if (unlikely(sent < 0))
+				// Same login/auth handshake rule: fixed-size zero-padded password buffer.
+				if (unlikely(send_all(sockfd, password, sizeof(password)) < 0))
 				{
-					PSE("[%s] >>> Failed to send password attempt", env.sender);
+					PSE("[%s] >>> Failed to send fixed-size password attempt", env.sender);
 					close(sockfd);
 					return(1);
 				}

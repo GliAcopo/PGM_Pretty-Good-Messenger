@@ -90,6 +90,10 @@ typedef enum MESSAGE_CODE
 
 extern const char *convert_error_code_to_string(const ERROR_CODE code);
 
+/* Common socket I/O helpers used by both client and server */
+extern int send_all(int fd, const void *buffer, size_t length);
+extern int recv_all(int fd, void *buffer, size_t length);
+
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 /*                                              SIZES, CONSTANTS, VARIABLES                                      */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
