@@ -43,6 +43,12 @@
 // Also used as the maximum number of logged in users / worker threads active at a time
 #define MAX_BACKLOG 10
 
+// To know wich ports are available in the system
+// cat /proc/sys/net/ipv4/ip_local_port_range
+// 32768   60999
+// We stay below the ephemeral port range to avoid random conflicts
+static const long PORT_MIN = 0, PORT_MAX = 32767, RESERVED_MAX = 1023;
+
 // CURRENT LOGGED IN USERS HANDLING
 static char *current_loggedin_users[MAX_BACKLOG] = {0}; // Array of pointers to the usernames of the currently logged in users, if a slot is NULL, then it is free, otherwise it contains the username of the logged in user. WARNING: the index of the slot is NOT used to identify the user in other arrays (thread_id_array and connections_array)
 static unsigned int current_loggedin_users_bitmap = 0;  // Which slots in the current_loggedin_users array are used, bit i is 1 if current_loggedin_users[i] contains the name of a loggedin user
@@ -255,9 +261,12 @@ static int32_t parse_port_string(const char *string_port, int32_t port_desired_f
     {
         return port_desired_fallback;
     }
-
-    long PORT_MIN = 0, PORT_MAX = 65535, RESERVED_MAX = 1023;
-
+    
+    /* MOVED TO THE START OF THE DOCUMENT AS GLOBAL CONSTANT
+        // To know wich ports are available in the system
+        // cat /proc/sys/net/ipv4/ip_local_port_range
+        long PORT_MIN = 0, PORT_MAX = 65535, RESERVED_MAX = 1023;
+    */
     char *endptr = NULL;
     errno = 0; // reset errno so no false alarms
 
@@ -513,14 +522,11 @@ static void remove_loggedin_user(int index)
 }
 
 /** 
- * @brief super easy helper function to check if a string ends with a certain suffix
- * @note It ain't much but keeps things clean
- * @return boolean
+ * @brief Chacks if a @p value string ends with a certain @p suffix
+ * @note: Taken from thread https://stackoverflow.com/questions/744766/how-to-compare-ends-of-strings-in-c
  */
 static int ends_with(const char *value, const char *suffix)
 {
-    // value_len = strlen(value);
-    // suffix_len = strlen(suffix);
     if (strlen(suffix) > strlen(value))
     {
         return 0;
@@ -529,14 +535,10 @@ static int ends_with(const char *value, const char *suffix)
 }
 
 /** 
- * @brief super easy helper function to check if a string starts with a certain prefix
- * @note Like said above
- * @return boolean
+ * @brief Chacks if a @p value string starts with a certain @p prefix
  */
 static int starts_with(const char *value, const char *prefix)
 {
-    // value_len is the strlen(value);
-    // prefix_len is the strlen(prefix);
     if (strlen(prefix) > strlen(value))
     {
         return 0;
