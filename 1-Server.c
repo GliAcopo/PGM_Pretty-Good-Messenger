@@ -1155,7 +1155,7 @@ static void *thread_routine(void *arg)
         goto cleanup;
     }
     login_env.sender[USERNAME_SIZE_CHARS - 1] = '\0';                     // Defensive null-termination
-    login_env.sender[strcspn(login_env.sender, "\r\n")] = '\0';           // Strip newline if present
+    login_env.sender[strcspn(login_env.sender, "\n")] = '\0';           // Strip newline if present
     P("[%d]::: Read username [%s]", connection_fd, login_env.sender);
     if (unlikely(!sanitize_username(login_env.sender)))
     {
@@ -1260,7 +1260,7 @@ static void *thread_routine(void *arg)
             goto cleanup;
         }
         client_password[PASSWORD_SIZE_CHARS - 1] = '\0';           // Add null-termination just in case
-        client_password[strcspn(client_password, "\r\n")] = '\0';  // Strip newline if present, also \r for Windows compatibility... yada yada 
+        client_password[strcspn(client_password, "\n")] = '\0';  // Strip newline if present
 
         // Create user folder
         if (unlikely(mkdir(user_dir_path, 0700) == -1 && errno != EEXIST))
@@ -1347,7 +1347,7 @@ static void *thread_routine(void *arg)
             goto cleanup;
         }
         fclose(password_file);
-        stored_password[strcspn(stored_password, "\r\n")] = '\0';
+        stored_password[strcspn(stored_password, "\n")] = '\0';
 
         // Notify client that the user exists and we expect a password
         response_code = NO_ERROR;
@@ -1376,7 +1376,7 @@ static void *thread_routine(void *arg)
                 goto cleanup;
             }
             client_password[PASSWORD_SIZE_CHARS - 1] = '\0';
-            client_password[strcspn(client_password, "\r\n")] = '\0';
+            client_password[strcspn(client_password, "\n")] = '\0';
 
             if (strcmp(client_password, stored_password) == 0)  // Passwords match case
             {
@@ -1493,11 +1493,37 @@ static void *thread_routine(void *arg)
                 goto cleanup;
             }
 
+            // Null terminate first
             header->sender[USERNAME_SIZE_CHARS - 1] = '\0';
             header->recipient[USERNAME_SIZE_CHARS - 1] = '\0';
+            header->subject[SUBJECT_SIZE_CHARS - 1] = '\0';
+            // Then chek for newlines and substitute with null termination
             header->sender[strcspn(header->sender, "\n")] = '\0';
             header->recipient[strcspn(header->recipient, "\n")] = '\0';
+            header->subject[strcspn(header->subject, "\n")] = '\0';
             snprintf(header->sender, sizeof(header->sender), "%s", login_env.sender);
+
+            if (unlikely(header->subject[0] == '\0'))
+            {
+                ERROR_CODE invalid = STRING_SIZE_INVALID;
+                if (unlikely(send_all(connection_fd, &invalid, sizeof(invalid)) < 0))
+                {
+                    int send_errno = errno;
+                    PSE("::: Failed to send STRING_SIZE_INVALID for empty subject to [%s]", login_env.sender);
+                    if (likely(send_errno == EPIPE))
+                    {
+                        goto cleanup;
+                    }
+                    if (likely(shutdown_now))
+                    {
+                        P("Shutdown flag is set, closing thread...");
+                        goto cleanup;
+                    }
+                }
+                free(header);
+                handled = 1;
+                break;
+            }
 
             uint32_t message_length = ntohl(header->message_length);
             if (message_length == 0 || message_length > MESSAGE_SIZE_CHARS)
@@ -2528,7 +2554,7 @@ int main(int argc, char** argv)
     /* -------------------------------------------------------------------------- */
 
     // Now we accept connections in loop, each connection will be handled by a different thread
-    size_t thread_args_connections_index = 0; // The index of the array to keep track where to write
+    int thread_args_connections_index = 0; // The index of the array to keep track where to write
     // Why does this not overwrite other thread ids? because we set the size of the thread id array to MAX_BACKLOG, which is the maximum number of connections that can be waiting at the same time, so we are sure that by the time we overwrite a thread id, the corresponding thread will have finished and its id will not be useful anymore (since we are not joining the threads, we do not care about their ids after they finish)
     // From [https://blog.clusterweb.com.br/?p=4854] "To summarize, if the TCP implementation in Linux receives the ACK packet of the 3-way handshake and the accept queue is full, it will basically ignore that packet."
     // MOVED TO START OF THE DOCUMENT FOR GLOBAL ACCESS   // The thread id array in which we store the thread ids
@@ -2586,7 +2612,7 @@ int main(int argc, char** argv)
                 break;
             }
 
-            PSE("Thread id array index %zu is not 0, a thread is already running on this index", thread_args_connections_index);
+            PSE("Thread id array index %d is not 0, a thread is already running on this index", thread_args_connections_index);
             thread_args_connections_index = ((thread_args_connections_index + 1) % MAX_BACKLOG);
             if (shutdown_now)
             {

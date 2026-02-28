@@ -187,7 +187,7 @@ int main(int argc, char** argv)
 				}
 			} while (ret == NULL);
 
-			env.sender[strcspn(env.sender, "\r\n")] = '\0'; // remove newline for network send
+			env.sender[strcspn(env.sender, "\n")] = '\0'; // remove newline for network send
 
 			P(">>> Read name: %s\nWould you like to continue the login with this username? [Y/n]", env.sender);
 			fflush(stdout);
@@ -296,7 +296,7 @@ int main(int argc, char** argv)
 		/* prepare username and send */
 		char* username = &env.sender[0];
 		username[USERNAME_SIZE_CHARS - 1] = '\0';
-		username[strcspn(username, "\r\n")] = '\0';
+		username[strcspn(username, "\n")] = '\0';
 
 		P("[%s] >>> Sending username: %s", env.sender, username);
 
@@ -337,7 +337,7 @@ int main(int argc, char** argv)
 					return(1);
 				}
 			}
-			password[strcspn(password, "\r\n")] = '\0';
+			password[strcspn(password, "\n")] = '\0';
 
 			sent = send(sockfd, password, strlen(password) + 1, 0);
 			if (unlikely(sent < 0)) {
@@ -385,7 +385,7 @@ int main(int argc, char** argv)
 						return (1);
 					}
 				}
-				password[strcspn(password, "\r\n")] = '\0';
+				password[strcspn(password, "\n")] = '\0';
 
 				sent = send(sockfd, password, strlen(password) + 1, 0);
 				if (unlikely(sent < 0)) {
@@ -497,89 +497,107 @@ int main(int argc, char** argv)
 			continue;
 		}
 
-		switch (request_code)
-		{
-		case REQUEST_SEND_MESSAGE:
-		{
-			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
+			switch (request_code)
 			{
-				PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
-				running = 0;
-				break;
-			}
-
-			char recipient[USERNAME_SIZE_CHARS] = {0};
-			printf("Insert recipient username:\n>");
-			fflush(stdout);
-			if (unlikely(fgets(recipient, sizeof(recipient), stdin) == NULL))
+			case REQUEST_SEND_MESSAGE:
 			{
-				PSE("[%s] >>> Failed to read recipient", env.sender);
-				running = 0;
-				break;
-			}
-			recipient[strcspn(recipient, "\r\n")] = '\0';
-
-			char message_buf[MESSAGE_SIZE_CHARS + 1] = {0};
-			printf("Insert message body (max %u chars):\n>", MESSAGE_SIZE_CHARS);
-			fflush(stdout);
-			if (unlikely(fgets(message_buf, sizeof(message_buf), stdin) == NULL))
-			{
-				PSE("[%s] >>> Failed to read message body", env.sender);
-				running = 0;
-				break;
-			}
-			message_buf[strcspn(message_buf, "\r\n")] = '\0';
-
-			size_t header_size = offsetof(MESSAGE, message);
-			MESSAGE *header = calloc(1, header_size);
-			if (unlikely(header == NULL))
-			{
-				PSE("[%s] >>> Failed to allocate MESSAGE header", env.sender);
-				running = 0;
-				break;
-			}
-			snprintf(header->sender, sizeof(header->sender), "%s", env.sender);
-			snprintf(header->recipient, sizeof(header->recipient), "%s", recipient);
-			size_t body_len = strlen(message_buf);
-			header->message_length = htonl((uint32_t)body_len);
-
-			if (unlikely(send_all(sockfd, header, header_size) < 0))
-			{
-				PSE("[%s] >>> Failed to send MESSAGE header", env.sender);
-				free(header);
-				running = 0;
-				break;
-			}
-
-			ERROR_CODE server_code = ERROR;
-			if (unlikely(recv_all(sockfd, &server_code, sizeof(server_code)) <= 0))
-			{
-				PSE("[%s] >>> Failed to receive send-message response", env.sender);
-				free(header);
-				running = 0;
-				break;
-			}
-			if (server_code != NO_ERROR)
-			{
-				P("[%s] >>> Send message failed: %s", env.sender, convert_error_code_to_string(server_code));
-				free(header);
-				break;
-			}
-
-			if (body_len > 0)
-			{
-				if (unlikely(send_all(sockfd, message_buf, body_len) < 0))
+				char recipient[USERNAME_SIZE_CHARS] = {0};
+				printf("Insert recipient username:\n>");
+				fflush(stdout);
+				if (unlikely(fgets(recipient, sizeof(recipient), stdin) == NULL))
 				{
-					PSE("[%s] >>> Failed to send message body", env.sender);
+					PSE("[%s] >>> Failed to read recipient", env.sender);
+					running = 0;
+					break;
+				}
+				recipient[strcspn(recipient, "\n")] = '\0';
+
+				char subject[SUBJECT_SIZE_CHARS] = {0};
+				printf("Insert message subject (max %u chars):\n>", SUBJECT_SIZE_CHARS - 1);
+				fflush(stdout);
+				if (unlikely(fgets(subject, sizeof(subject), stdin) == NULL))
+				{
+					PSE("[%s] >>> Failed to read message subject", env.sender);
+					running = 0;
+					break;
+				}
+				subject[strcspn(subject, "\n")] = '\0';
+				if (unlikely(subject[0] == '\0'))
+				{
+					P("[%s] >>> Empty subject is not allowed", env.sender);
+					break;
+				}
+
+				char message_buf[MESSAGE_SIZE_CHARS + 1] = {0};
+				printf("Insert message body (max %u chars):\n>", MESSAGE_SIZE_CHARS);
+				fflush(stdout);
+				if (unlikely(fgets(message_buf, sizeof(message_buf), stdin) == NULL))
+				{
+					PSE("[%s] >>> Failed to read message body", env.sender);
+					running = 0;
+					break;
+				}
+				message_buf[strcspn(message_buf, "\n")] = '\0';
+
+				if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
+				{
+					PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
+					running = 0;
+					break;
+				}
+
+				size_t header_size = offsetof(MESSAGE, message);
+				MESSAGE *header = calloc(1, header_size);
+				if (unlikely(header == NULL))
+				{
+					PSE("[%s] >>> Failed to allocate MESSAGE header", env.sender);
+					running = 0;
+					break;
+				}
+				snprintf(header->sender, sizeof(header->sender), "%s", env.sender);
+				snprintf(header->recipient, sizeof(header->recipient), "%s", recipient);
+				snprintf(header->subject, sizeof(header->subject), "%s", subject);
+				size_t body_len = strlen(message_buf);
+				header->message_length = htonl((uint32_t)body_len);
+
+				if (unlikely(send_all(sockfd, header, header_size) < 0))
+				{
+					PSE("[%s] >>> Failed to send MESSAGE header", env.sender);
 					free(header);
 					running = 0;
 					break;
 				}
+
+				ERROR_CODE server_code = ERROR;
+				if (unlikely(recv_all(sockfd, &server_code, sizeof(server_code)) <= 0))
+				{
+					PSE("[%s] >>> Failed to receive send-message response", env.sender);
+					free(header);
+					running = 0;
+					break;
+				}
+				if (unlikely(server_code != NO_ERROR))
+				{
+					P("[%s] >>> Send message failed: %s", env.sender, convert_error_code_to_string(server_code));
+					free(header);
+					break;
+				}
+
+				if (likely(body_len > 0))
+				{
+					if (unlikely(send_all(sockfd, message_buf, body_len) < 0))
+					{
+						PSE("[%s] >>> Failed to send message body", env.sender);
+						free(header);
+						running = 0;
+						break;
+					}
+				}
+
+				free(header);
+				P("[%s] >>> Message sent", env.sender);
+				break;
 			}
-			free(header);
-			P("[%s] >>> Message sent", env.sender);
-			break;
-		}
 		case REQUEST_LIST_REGISTERED_USERS:
 		{
 			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
@@ -795,62 +813,69 @@ int main(int argc, char** argv)
 				break;
 			}
 
-			size_t header_size = offsetof(MESSAGE, message);
-			MESSAGE *header = calloc(1, header_size);
-			if (unlikely(header == NULL))
-			{
-				PSE("[%s] >>> Failed to allocate MESSAGE header", env.sender);
-				free(entries);
-				free(list);
-				running = 0;
-				break;
-			}
-			if (unlikely(recv_all(sockfd, header, header_size) <= 0))
-			{
-				PSE("[%s] >>> Failed to receive MESSAGE header", env.sender);
-				free(header);
-				free(entries);
-				free(list);
-				running = 0;
-				break;
-			}
+				size_t header_size = offsetof(MESSAGE, message);
+				MESSAGE *header = calloc(1, header_size);
+				if (unlikely(header == NULL))
+				{
+					PSE("[%s] >>> Failed to allocate MESSAGE header", env.sender);
+					free(entries);
+					free(list);
+					running = 0;
+					break;
+				}
+				if (unlikely(recv_all(sockfd, header, header_size) <= 0))
+				{
+					PSE("[%s] >>> Failed to receive MESSAGE header", env.sender);
+					free(header);
+					free(entries);
+					free(list);
+					running = 0;
+					break;
+				}
+				header->sender[USERNAME_SIZE_CHARS - 1] = '\0';
+				header->recipient[USERNAME_SIZE_CHARS - 1] = '\0';
+				header->subject[SUBJECT_SIZE_CHARS - 1] = '\0';
+				header->sender[strcspn(header->sender, "\n")] = '\0';
+				header->recipient[strcspn(header->recipient, "\n")] = '\0';
+				header->subject[strcspn(header->subject, "\n")] = '\0';
 
-			uint32_t body_len = ntohl(header->message_length);
-			if (body_len == 0 || body_len > MESSAGE_SIZE_CHARS)
-			{
-				P("[%s] >>> Invalid message length received", env.sender);
-				free(header);
-				free(entries);
-				free(list);
-				break;
-			}
+				uint32_t body_len = ntohl(header->message_length);
+				if (unlikely(body_len == 0 || body_len > MESSAGE_SIZE_CHARS))
+				{
+					P("[%s] >>> Invalid message length received", env.sender);
+					free(header);
+					free(entries);
+					free(list);
+					break;
+				}
 
-			char *body = calloc(body_len + 1, sizeof(char));
-			if (unlikely(body == NULL))
-			{
-				PSE("[%s] >>> Failed to allocate message body", env.sender);
-				free(header);
-				free(entries);
-				free(list);
-				running = 0;
-				break;
-			}
-			if (unlikely(recv_all(sockfd, body, body_len) <= 0))
-			{
-				PSE("[%s] >>> Failed to receive message body", env.sender);
-				free(body);
-				free(header);
-				free(entries);
-				free(list);
-				running = 0;
-				break;
-			}
-			body[body_len] = '\0';
+				char *body = calloc(body_len + 1, sizeof(char));
+				if (unlikely(body == NULL))
+				{
+					PSE("[%s] >>> Failed to allocate message body", env.sender);
+					free(header);
+					free(entries);
+					free(list);
+					running = 0;
+					break;
+				}
+				if (unlikely(recv_all(sockfd, body, body_len) <= 0))
+				{
+					PSE("[%s] >>> Failed to receive message body", env.sender);
+					free(body);
+					free(header);
+					free(entries);
+					free(list);
+					running = 0;
+					break;
+				}
+				body[body_len] = '\0';
 
-			printf("\nMessage loaded:\n");
-			printf("  From: %s\n", header->sender);
-			printf("  To: %s\n", header->recipient);
-			printf("  Body: %s\n", body);
+				printf("\nMessage loaded:\n");
+				printf("  From: %s\n", header->sender);
+				printf("  To: %s\n", header->recipient);
+				printf("  Subject: %s\n", header->subject);
+				printf("  Body: %s\n", body);
 
 			free(body);
 			free(header);

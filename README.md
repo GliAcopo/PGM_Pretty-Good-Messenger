@@ -1,4 +1,4 @@
-TODO ABSOLUTELY: implement also the Subject field in the messages!
+Subject field implementation status: done (MESSAGE now carries Recipient, Subject, Text).
 
 # Specifiacations to be implemented
 Messaging service
@@ -35,9 +35,12 @@ Note: When referring to "save the MESSAGE structure in the file" I mean that it 
 
 - `REQUEST_SEND_MESSAGE`:
     - Server receives the `MESSAGE` header (read `offsetof(MESSAGE, message)` bytes, not `sizeof(MESSAGE)`).
+        - Header fixed fields are: sender, recipient, subject, message_length.
     - Server checks that the recipient folder exists.
         - If not found, reply with `USER_NOT_FOUND` and stop.
         - Otherwise reply with `NO_ERROR` and continue.
+    - Server validates `subject` from header.
+        - If subject is empty, server responds with `ERROR_CODE` `STRING_SIZE_INVALID`.
     - Server validates `message_length` from the header.
         - If `message_length == 0` then the message is empty and the server responds with `ERROR_CODE` `STRING_SIZE_INVALID`.
         - If `message_length > MESSAGE_SIZE_CHARS` then the message is invalid and the server responds with `ERROR_CODE` `STRING_SIZE_INVALID`.
