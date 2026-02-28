@@ -81,8 +81,8 @@ static int sanitize_filename(const char *value);
 static ERROR_CODE configure_client_keepalive(int client_fd);
 
 /**
- * @brief 
- * 
+ * @brief Exit the thread and update the array that contains the thread ids and the connectoin fds. This function is used in conjuction with the .cleanup phase in the worker threads
+ * @note The errors are handled directly in the function (phtread_exit() on failure).
  * @param thread_index 
  */
 static void exit_thread_and_update_thread_id_array(int thread_index)
@@ -90,13 +90,14 @@ static void exit_thread_and_update_thread_id_array(int thread_index)
     if (thread_index < 0 || thread_index >= MAX_BACKLOG)
     {
         P("Invalid thread index for exit_thread_and_update_thread_id_array: %d", thread_index);
-        pthread_exit(NULL);
+        pthread_exit(NULL); // @note If the thread index is invalid then we simply exit the thread here and now
     }
 
+    // ------------------------- Lock arrays
     lock_shutdown_arrays_or_exit(5);
     if (number_of_current_logged_in_users > 0)
     {
-        number_of_current_logged_in_users--; // Decrement active worker count
+        number_of_current_logged_in_users--;
     }
     else
     {
@@ -104,7 +105,9 @@ static void exit_thread_and_update_thread_id_array(int thread_index)
     }
     thread_id_array[thread_index] = 0;   // Clear the thread id from the array
     connections_array[thread_index] = 0; // Clear the connection fd from the array
+    // ------------------------- UnLock arrays
     unlock_shutdown_arrays_or_exit(5);
+
     pthread_exit(NULL);
 }
 
@@ -170,7 +173,7 @@ static ERROR_CODE configure_client_keepalive(int client_fd)
     {
         return NULL_PARAMETERS;
     }
-    /*
+    /*  LINUX MAN:
         int setsockopt(int sockfd, int level, int optname, const void optval[.optlen], socklen_t optlen);
         setsockopt()  manipulate  options for the socket referred to by the file descriptor sockfd.
        Options may exist at multiple protocol levels; they are always present at the uppermost socket level.
@@ -240,7 +243,7 @@ static ERROR_CODE configure_client_keepalive(int client_fd)
 }
 
 /**
- * @brief The function will parse a string (port) and convert it into a number (also doing validation checks).
+ * @brief The function will parse a string (port) and convert it into a int32_t number (and will also check the input for validity).
  *
  * @param string_port    NULL-terminated string that contains the port in base 10. If NULL or empty, the function will returns @p port_desired_fallback
  * @param port_desired_fallback Port that gets returned when @p string_port does not satisfy requirements
@@ -278,7 +281,7 @@ static int32_t parse_port_string(const char *string_port, int32_t port_desired_f
 
 
 /**
- * @brief Prints all the local IP addresses of the machine
+ * @brief Prints all the local IP addresses of the machine, this function is supposed to be used in conjuction to the startup message phase of the server, to allow the user to know which ips are available to the server
  * @param port The port number to print alongside the IP addresses
  * @return ERROR_CODE NO_ERROR on success, SYSCALL_ERROR on failure
  * @note This function is inspired to the linux man example getifaddrs(3)
@@ -737,6 +740,7 @@ static int sanitize_username(const char *value)
  */
 static int sanitize_filename(const char *value)
 {
+    // @note: todo (maybe), set the ierrno value to a specific error code, though the printing of the error message should be enough.
     if ((value == NULL || value[0] == '\0'))
     {
         PIE("Filename is null or empty");
@@ -748,6 +752,11 @@ static int sanitize_filename(const char *value)
         PIE("Filename length is invalid: %zu", value_length);
         return 0;
     }
+    if (strstr(value, "..") != NULL)
+    {
+        PIE("Filename contains invalid pattern: '..'");
+        return 0;
+    }
     for (const char *cursor = value; *cursor != '\0'; cursor++) // We slide the string forward cheking every character
     {
         unsigned char c = (unsigned char)*cursor;
@@ -755,7 +764,8 @@ static int sanitize_filename(const char *value)
         int is_upper = (c >= (unsigned char)'A' && c <= (unsigned char)'Z');
         int is_digit = (c >= (unsigned char)'0' && c <= (unsigned char)'9');
         int is_symbol = (c == (unsigned char)'_' || c == (unsigned char)'-');
-        if (!(is_lower || is_upper || is_digit || is_symbol))
+        int is_dot = (c == (unsigned char)'.'); /** @warning for the filename we need to allow the dot since we need it for the file extension, if this line is removed then the observed behaviour would be that all the filenames are rejected */
+        if (!(is_lower || is_upper || is_digit || is_symbol || is_dot))
         {
             PIE("Invalid character in filename: '%c'", c);
             return 0;
