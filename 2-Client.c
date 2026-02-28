@@ -51,11 +51,11 @@ static int send_all(int fd, const void *buffer, size_t length)
 	while (remaining > 0)
 	{
 		ssize_t sent = send(fd, cursor, remaining, 0);
-		if (sent < 0)
+		if (unlikely(sent < 0))
 		{
 			// EINTR means the syscall was interrupted by a signal.
 			// In this case retrying is the correct behavior.
-			if (errno == EINTR)
+			if (unlikely(errno == EINTR))
 			{
 				continue;
 			}
@@ -63,7 +63,7 @@ static int send_all(int fd, const void *buffer, size_t length)
 		}
 		// If send() returns 0 here, no progress was made.
 		// Treat it as failure, otherwise the loop could spin forever.
-		if (sent == 0)
+		if (unlikely(sent == 0))
 		{
 			return -1;
 		}
@@ -90,10 +90,10 @@ static int recv_all(int fd, void *buffer, size_t length)
 	while (remaining > 0)
 	{
 		ssize_t recvd = recv(fd, cursor, remaining, 0);
-		if (recvd < 0)
+		if (unlikely(recvd < 0))
 		{
 			// EINTR: interrupted by signal, retry safely.
-			if (errno == EINTR)
+			if (unlikely(errno == EINTR))
 			{
 				continue;
 			}
@@ -101,7 +101,7 @@ static int recv_all(int fd, void *buffer, size_t length)
 		}
 		// recv()==0 means peer closed the connection (EOF on socket).
 		// Caller can decide whether this is expected or an error for current phase.
-		if (recvd == 0)
+		if (unlikely(recvd == 0))
 		{
 			return 0;
 		}
@@ -127,7 +127,8 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
 {
 	// unlikely macro comes from the "Global variables and function.h" file and uses __builtin_expect() gcc compiler macro
 	// Unlikely means that the condition probably evaluates to false
-	if(unlikely(login_env == NULL || message == NULL)){
+	if (unlikely(login_env == NULL || message == NULL))
+	{
 		ierrno = NULL_PARAMETERS;
 		PIE("");
 		return(NULL_PARAMETERS);
@@ -194,7 +195,7 @@ int main(int argc, char** argv)
 
 	P(">>> argc = %d", argc);
 
-	if(argc >= 2) // If username passed as parameter, skip interactive prompt so scripts/tests can run non-interactively
+	if (likely(argc >= 2)) // If username passed as parameter, skip interactive prompt so scripts/tests can run non-interactively
 	{
 		P(">>> Username passed as parameter: %s", argv[1]);
 		snprintf(env.sender, USERNAME_SIZE_CHARS, "%s", argv[1]);
@@ -249,7 +250,7 @@ int main(int argc, char** argv)
 		// the prompt has no final newline, so it may stay buffered and invisible to the user.
 		// Flushing now guarantees the user sees exactly what is being asked.
 		fflush(stdout);
-		if(argc >= 3) // If server ip passed as parameter
+		if (likely(argc >= 3)) // If server ip passed as parameter
 		{
 			P(">>> Server IP passed as parameter: %s", argv[2]);
 			snprintf(server_ip, sizeof(server_ip), "%s", argv[2]);
@@ -265,7 +266,8 @@ int main(int argc, char** argv)
 		// fgets() keeps the trailing newline when there is space in the buffer.
 		// We remove it because parsing/validation/network code expects a clean C string token.
 		server_ip[strcspn(server_ip, "\n")] = '\0';
-		if (strlen(server_ip) == 0) { // default to local
+		if (unlikely(strlen(server_ip) == 0)) // default to local
+		{
 			P("[%s] >>> Defaulting to local server IP", env.sender);
 			snprintf(server_ip, sizeof(server_ip), "0.0.0.0");
 		}
@@ -276,20 +278,21 @@ int main(int argc, char** argv)
 		printf("Enter server port (default is 6666) (1-65535):\n>");
 		// Same prompt-visibility reason: flush before blocking on stdin.
 		fflush(stdout);
-		if(argc >= 4)
+		if (likely(argc >= 4))
 		{
 			P(">>> Server port passed as parameter: %s", argv[3]);
 			snprintf(port_input, sizeof(port_input), "%s", argv[3]);
 		}
 		else
 		{
-			if (unlikely(fgets(port_input, sizeof(port_input), stdin) == NULL)) {
+			if (unlikely(fgets(port_input, sizeof(port_input), stdin) == NULL))
+			{
 				PSE("[%s] >>> Failed to read server port", env.sender);
 				return(1);
 			}
 		}
 		port_input[strcspn(port_input, "\n")] = '\0';
-		if (strlen(port_input) <= 0) // Newline was stripped from input (before was giving problems)
+		if (unlikely(strlen(port_input) <= 0)) // Newline was stripped from input (before was giving problems)
 		{ // default to 6666
 			snprintf(port_input, sizeof(port_input), "6666");
 			P("[%s] >>> Defaulting to port 6666", env.sender);
@@ -300,14 +303,16 @@ int main(int argc, char** argv)
 		// strtol() is used instead of atoi() so we can validate:
 		// 1) if no number was parsed, and 2) if the value is outside valid port range.
 		long port_long = strtol(port_input, &endptr, 10);
-		if (endptr == port_input || port_long <= 0 || port_long > 65535) {
+		if (unlikely(endptr == port_input || port_long <= 0 || port_long > 65535))
+		{
 			P("[%s] >>> Invalid port number port_input:port_long[%s]:[%ld]", env.sender, port_input, port_long);
 			return(1);
 		}
 		const uint16_t SERVER_PORT = (uint16_t)port_long;
 
 		sockfd = socket(AF_INET, SOCK_STREAM, 0);
-		if (unlikely(sockfd < 0)) {
+		if (unlikely(sockfd < 0))
+		{
 			PSE("[%s] >>> socket()", env.sender);
 			return(1);
 		}
@@ -315,14 +320,16 @@ int main(int argc, char** argv)
 		srv.sin_family = AF_INET; // This socket speaks IPv4.
 		// Port in sockaddr_in must be stored in network byte order, not host byte order.
 		srv.sin_port = htons(SERVER_PORT);
-		if (unlikely(inet_pton(AF_INET, server_ip, &srv.sin_addr) <= 0)) {
+		if (unlikely(inet_pton(AF_INET, server_ip, &srv.sin_addr) <= 0))
+		{
 			PSE("[%s] >>> Invalid IPv4 address", env.sender);
 			close(sockfd);
 			return(1);
 		}
 
 		P("[%s] >>> Connecting to %s:%u ...", env.sender, server_ip, SERVER_PORT);
-		if (unlikely(connect(sockfd, (struct sockaddr *)&srv, sizeof(srv)) < 0)) {
+		if (unlikely(connect(sockfd, (struct sockaddr *)&srv, sizeof(srv)) < 0))
+		{
 			PSE("[%s] >>> connect()", env.sender);
 			close(sockfd);
 			return(1);
@@ -350,7 +357,8 @@ int main(int argc, char** argv)
 		// We send strlen(username) + 1 so that the terminating '\0' is sent too.
 		// This lets the server safely treat the payload as a standard C string.
 		ssize_t sent = send(sockfd, username, strlen(username) + 1, 0);
-		if (unlikely(sent < 0)) {
+		if (unlikely(sent < 0))
+		{
 			PSE("[%s] >>> send()", env.sender);
 			close(sockfd);
 			return(1);
@@ -363,7 +371,8 @@ int main(int argc, char** argv)
 		// We expect a fixed-size ERROR_CODE packet here.
 		// MSG_WAITALL asks recv() to wait until all bytes of that packet arrive (or until error/close).
 		ssize_t recvd = recv(sockfd, &server_code, sizeof(server_code), MSG_WAITALL);
-		if (unlikely(recvd != sizeof(server_code))) {
+		if (unlikely(recvd != sizeof(server_code)))
+		{
 			PSE("[%s] >>> Failed to receive initial server code (got %zd bytes)", env.sender, recvd);
 			close(sockfd);
 			return(1);
@@ -371,21 +380,23 @@ int main(int argc, char** argv)
 		P("[%s] >>> Initial server response: %s", env.sender, convert_error_code_to_string(server_code));
 
 		// Depending on the server response code, either register or authenticate
-		if (unlikely(server_code == START_REGISTRATION)) { // registration path
+		if (unlikely(server_code == START_REGISTRATION)) // registration path
+		{
 			// Registration path: server did not find this user and asks for initial password setup.
 			char password[PASSWORD_SIZE_CHARS];
 			printf("User not found, please register.\nInsert new password:\n>");
 			// Prompt ends with '>' (no newline), so flush manually before reading input.
 			fflush(stdout);
 
-			if(argc >= 5)
+			if (likely(argc >= 5))
 			{
 				P("[%s] >>> <password> passed as parameter: %s", env.sender, argv[4]);
 				snprintf(password, sizeof(password), "%s", argv[4]);
 			}
 			else
 			{
-				if (unlikely(fgets(password, sizeof(password), stdin) == NULL)) {
+				if (unlikely(fgets(password, sizeof(password), stdin) == NULL))
+				{
 					PSE("[%s] >>> Failed to read password", env.sender);
 					close(sockfd);
 					return(1);
@@ -395,26 +406,31 @@ int main(int argc, char** argv)
 
 			// Same framing used for username: include terminating '\0' so server reads a full C string.
 			sent = send(sockfd, password, strlen(password) + 1, 0);
-			if (unlikely(sent < 0)) {
+			if (unlikely(sent < 0))
+			{
 				PSE("[%s] >>> Failed to send registration password", env.sender);
 				close(sockfd);
 				return(1);
 			}
 
 			recvd = recv(sockfd, &server_code, sizeof(server_code), MSG_WAITALL);
-			if (unlikely(recvd != sizeof(server_code))) {
+			if (unlikely(recvd != sizeof(server_code)))
+			{
 				PSE("[%s] >>> Failed to receive registration confirmation (got %zd bytes)", env.sender, recvd);
 				close(sockfd);
 				return(1);
 			}
-			if (unlikely(server_code != NO_ERROR)) {
+			if (unlikely(server_code != NO_ERROR))
+			{
 				P("[%s] >>> Registration failed: %s", env.sender, convert_error_code_to_string(server_code));
 				close(sockfd);
 				return(1);
 			}
 			P("[%s] >>> Registration successful", env.sender);
 
-		} else if (server_code == NO_ERROR) { // authentication path
+		}
+		else if (likely(server_code == NO_ERROR)) // authentication path
+		{
 			// Existing-user path: user exists, so run password authentication loop.
 			// const int MAX_PASSWORD_ATTEMPTS = 3; --- DEFINED IN 3-Global-Variables-and-Functions.h ---
 
@@ -427,7 +443,7 @@ int main(int argc, char** argv)
 				// Flush prompt before blocking on stdin, for the same reason explained above.
 				fflush(stdout);
 
-				if (argc >= 5)
+				if (likely(argc >= 5))
 				{
 					P("[%s] >>> <password> passed as parameter: %s", env.sender, argv[4]);
 					snprintf(password, sizeof(password), "%s", argv[4]);
@@ -445,35 +461,43 @@ int main(int argc, char** argv)
 
 				// Same protocol framing: send password as null-terminated C string.
 				sent = send(sockfd, password, strlen(password) + 1, 0);
-				if (unlikely(sent < 0)) {
+				if (unlikely(sent < 0))
+				{
 					PSE("[%s] >>> Failed to send password attempt", env.sender);
 					close(sockfd);
 					return(1);
 				}
 
 				recvd = recv(sockfd, &server_code, sizeof(server_code), MSG_WAITALL);
-				if (unlikely(recvd != sizeof(server_code))) {
+				if (unlikely(recvd != sizeof(server_code)))
+				{
 					PSE("[%s] >>> Failed to receive auth response (got %zd bytes)", env.sender, recvd);
 					close(sockfd);
 					return(1);
 				}
 
-				if (server_code == NO_ERROR) {
+				if (likely(server_code == NO_ERROR))
+				{
 					P("[%s] >>> Authentication successful", env.sender);
 					authenticated = 1;
-				} else {
+				}
+				else
+				{
 					// Increase attempts only on failed authentication responses.
 					// This keeps MAX_PASSWORD_ATTEMPTS semantics clear and predictable.
 					attempt++;
 					P("[%s] >>> Authentication failed: %s (%d/%d)", env.sender, convert_error_code_to_string(server_code), attempt, MAX_PASSWORD_ATTEMPTS);
-					if (attempt >= MAX_PASSWORD_ATTEMPTS) {
+					if (unlikely(attempt >= MAX_PASSWORD_ATTEMPTS))
+					{
 						P("[%s] >>> Maximum attempts reached, closing.", env.sender);
 						close(sockfd);
 						return(1);
 					}
 				}
 			}
-		} else {
+		}
+		else
+		{
 			P("[%s] >>> Unexpected server response: %s", env.sender, convert_error_code_to_string(server_code));
 			close(sockfd);
 			return(1);
@@ -517,7 +541,7 @@ int main(int argc, char** argv)
 		char choice = '\0';
 		for (size_t i = 0; choice_buf[i] != '\0'; i++)
 		{
-			if (choice_buf[i] != ' ' && choice_buf[i] != '\t' && choice_buf[i] != '\n' && choice_buf[i] != '\r')
+			if (likely(choice_buf[i] != ' ' && choice_buf[i] != '\t' && choice_buf[i] != '\n' && choice_buf[i] != '\r'))
 			{
 				choice = choice_buf[i];
 				break;
@@ -715,7 +739,7 @@ int main(int argc, char** argv)
 				running = 0;
 				break;
 			}
-			if (list_len > 0)
+			if (likely(list_len > 0))
 			{
 				if (unlikely(recv_all(sockfd, list, list_len) <= 0))
 				{
@@ -766,7 +790,7 @@ int main(int argc, char** argv)
 				running = 0;
 				break;
 			}
-			if (list_len > 0)
+			if (likely(list_len > 0))
 			{
 				if (unlikely(recv_all(sockfd, list, list_len) <= 0))
 				{
@@ -777,7 +801,7 @@ int main(int argc, char** argv)
 				}
 			}
 
-			if (list[0] == '\0')
+			if (unlikely(list[0] == '\0'))
 			{
 				P("[%s] >>> No messages available", env.sender);
 				// Tell the server we are aborting this operation so it does not wait for a file selection code/name.
@@ -791,7 +815,7 @@ int main(int argc, char** argv)
 			for (size_t i = 0; list[i] != '\0'; i++)
 			{
 				// Server sends list entries separated by '\n', so counting newlines gives number of entries.
-				if (list[i] == '\n')
+				if (unlikely(list[i] == '\n'))
 				{
 					entry_count++;
 				}
@@ -812,11 +836,11 @@ int main(int argc, char** argv)
 			char *cursor = list;
 			for (size_t i = 0; list[i] != '\0'; i++)
 			{
-				if (list[i] == '\n')
+				if (unlikely(list[i] == '\n'))
 				{
 					// Replace separator with '\0' and reuse existing buffer (in-place tokenization, no extra copies).
 					list[i] = '\0';
-					if (idx < entry_count)
+					if (likely(idx < entry_count))
 					{
 						entries[idx++] = cursor;
 					}
@@ -845,7 +869,7 @@ int main(int argc, char** argv)
 				break;
 			}
 
-			if (choice_line[0] == 'q' || choice_line[0] == 'Q')
+			if (unlikely(choice_line[0] == 'q' || choice_line[0] == 'Q'))
 			{
 				// User canceled from client side: send explicit abort code so server can close this request cleanly.
 				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
@@ -857,7 +881,7 @@ int main(int argc, char** argv)
 
 			char *select_endptr = NULL;
 			long selection = strtol(choice_line, &select_endptr, 10);
-			if (select_endptr == choice_line || selection < 0 || (size_t)selection >= entry_count)
+			if (unlikely(select_endptr == choice_line || selection < 0 || (size_t)selection >= entry_count))
 			{
 				P("[%s] >>> Invalid selection", env.sender);
 				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
@@ -898,7 +922,7 @@ int main(int argc, char** argv)
 				running = 0;
 				break;
 			}
-			if (response != NO_ERROR)
+			if (unlikely(response != NO_ERROR))
 			{
 				P("[%s] >>> Load message failed: %d", env.sender, response);
 				free(entries);
@@ -1014,7 +1038,7 @@ int main(int argc, char** argv)
 				running = 0;
 				break;
 			}
-			if (list_len > 0)
+			if (likely(list_len > 0))
 			{
 				if (unlikely(recv_all(sockfd, list, list_len) <= 0))
 				{
@@ -1066,7 +1090,7 @@ int main(int argc, char** argv)
 				running = 0;
 				break;
 			}
-			if (list_len > 0)
+			if (likely(list_len > 0))
 			{
 				if (unlikely(recv_all(sockfd, list, list_len) <= 0))
 				{
@@ -1077,7 +1101,7 @@ int main(int argc, char** argv)
 				}
 			}
 
-			if (list[0] == '\0')
+			if (unlikely(list[0] == '\0'))
 			{
 				P("[%s] >>> No messages available", env.sender);
 				// Tell server this request is intentionally aborted, so it does not wait for a selection.
@@ -1090,7 +1114,7 @@ int main(int argc, char** argv)
 			size_t entry_count = 0;
 			for (size_t i = 0; list[i] != '\0'; i++)
 			{
-				if (list[i] == '\n')
+				if (unlikely(list[i] == '\n'))
 				{
 					entry_count++;
 				}
@@ -1111,11 +1135,11 @@ int main(int argc, char** argv)
 			char *cursor = list;
 			for (size_t i = 0; list[i] != '\0'; i++)
 			{
-				if (list[i] == '\n')
+				if (unlikely(list[i] == '\n'))
 				{
 					// Reuse list buffer by replacing '\n' separators with '\0' terminators.
 					list[i] = '\0';
-					if (idx < entry_count)
+					if (likely(idx < entry_count))
 					{
 						entries[idx++] = cursor;
 					}
@@ -1144,7 +1168,7 @@ int main(int argc, char** argv)
 				break;
 			}
 
-			if (choice_line[0] == 'q' || choice_line[0] == 'Q')
+			if (unlikely(choice_line[0] == 'q' || choice_line[0] == 'Q'))
 			{
 				// User canceled delete operation from menu: notify server with explicit abort code.
 				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
@@ -1156,7 +1180,7 @@ int main(int argc, char** argv)
 
 			char *select_endptr = NULL;
 			long selection = strtol(choice_line, &select_endptr, 10);
-			if (select_endptr == choice_line || selection < 0 || (size_t)selection >= entry_count)
+			if (unlikely(select_endptr == choice_line || selection < 0 || (size_t)selection >= entry_count))
 			{
 				P("[%s] >>> Invalid selection", env.sender);
 				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
@@ -1198,7 +1222,7 @@ int main(int argc, char** argv)
 				break;
 			}
 
-			if (response == NO_ERROR)
+			if (likely(response == NO_ERROR))
 			{
 				P("[%s] >>> Message deleted", env.sender);
 			}
@@ -1268,7 +1292,7 @@ int main(int argc, char** argv)
 
 		char suffix1[] = ".pgm";
 		char buf1[strlen(env.sender) + strlen(suffix1) + 1];
-		if (snprintf(buf1, sizeof(buf1), "%s%s", env.sender, suffix1) > 0)
+		if (unlikely(snprintf(buf1, sizeof(buf1), "%s%s", env.sender, suffix1) > 0))
 		{
 			PSE(">>> Truncated output");
 			P("%s", buf1);
@@ -1283,7 +1307,7 @@ int main(int argc, char** argv)
 
 			printf("Seems like the file %s does not exist, creating it now:\n", buf1);
 
-			if (creat(buf1, S_IRUSR | S_IWUSR) < 0)
+			if (unlikely(creat(buf1, S_IRUSR | S_IWUSR) < 0))
 			{
 				PIE("");
 				E();
@@ -1292,7 +1316,7 @@ int main(int argc, char** argv)
 		close(usrfd);
 
 		// Open user file with messages
-		if ((usrfd = fopen(buf1, "r+")) == NULL)
+		if (unlikely((usrfd = fopen(buf1, "r+")) == NULL))
 		{
 			PSE("");
 			E();
@@ -1301,7 +1325,7 @@ int main(int argc, char** argv)
 		// GET USR PUBKEY FILE
 		char suffix2[] = ".pgmkey";
 		char buf2[strlen(env.sender) + strlen(suffix2) + 1];
-		if (snprintf(buf2, sizeof(buf2), "%s%s", env.sender, suffix2) > 0)
+		if (unlikely(snprintf(buf2, sizeof(buf2), "%s%s", env.sender, suffix2) > 0))
 		{
 			PSE(">>> Truncated output");
 			P("%s", buf2);
@@ -1316,7 +1340,7 @@ int main(int argc, char** argv)
 
 			printf("Seems like the file %s does not exist, creating it now\n", buf2);
 
-			if (create_pubkey_file(buf2) != NO_ERROR)
+			if (unlikely(create_pubkey_file(buf2) != NO_ERROR))
 			{
 				PIE("");
 				E();
@@ -1325,7 +1349,7 @@ int main(int argc, char** argv)
 		close(usrfd);
 
 		// Get key fds
-		if ((keyfd = fopen(buf2, "r")) == NULL)
+		if (unlikely((keyfd = fopen(buf2, "r")) == NULL))
 		{
 			PSE("");
 			E();
