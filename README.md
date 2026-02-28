@@ -194,13 +194,3 @@ This is used to reduce ghost/stale connections.
 ### Hold connection mode in the server
 Use the `DEBUG` flag during application compilation to enable debug output in the server.
 If the applcation is not compiled with the `DEBUG` flag, the debug output function will not be even present within the code. This was a personal choice I've made so that the executable's size can be made smaller and there is no need to include other conditional jumps every time a debug message gets printed. 
-
-
-# OLD: TO DELETE
-@TO IMPLEMENT (todo)
-- All interruption get masked before executing critical operations such as saving files. using the `deactivate_interrupts()` function
-- After operations are completed, the function `activate_interrupts()` gets called and all the interrupts happened during that time get executed
-NOTE: if more than one thread calls for `deactivate_interrupts()` nothing bad should happen, but if a thread finishes what it has to do and calls for `activate_interrupts()` while others are doing things then there might be a problem, I need a way to reactivate interrupts only if all threads are finished doing important stuff.
-
-I need to handle `SIGPIPE` for broken connections, and if that happens then the threads executes `cleanup`.
-(maybe such thing could be implemented only by having a `sig_atomic_t` variable `connection_lost`?)
