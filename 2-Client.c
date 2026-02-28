@@ -34,21 +34,35 @@
 // ierror, an internal debug substitute to errno
 ERROR_CODE ierrno = NO_ERROR;
 
+/**
+ * @brief send() wrapper that guarantees the whole buffer is transmitted on a TCP stream socket
+ *
+ * @param fd connected socket file descriptor
+ * @param buffer bytes to send
+ * @param length how many bytes must be sent before returning success
+ * @return 0 on success, -1 on error/peer-closed condition
+ */
 static int send_all(int fd, const void *buffer, size_t length)
 {
 	const char *cursor = buffer;
 	size_t remaining = length;
+	// Important: on TCP sockets send() is not guaranteed to send the full buffer in one call.
+	// We keep sending from where we stopped until the requested byte count is fully transmitted.
 	while (remaining > 0)
 	{
 		ssize_t sent = send(fd, cursor, remaining, 0);
 		if (sent < 0)
 		{
+			// EINTR means the syscall was interrupted by a signal.
+			// In this case retrying is the correct behavior.
 			if (errno == EINTR)
 			{
 				continue;
 			}
 			return -1;
 		}
+		// If send() returns 0 here, no progress was made.
+		// Treat it as failure, otherwise the loop could spin forever.
 		if (sent == 0)
 		{
 			return -1;
@@ -59,21 +73,34 @@ static int send_all(int fd, const void *buffer, size_t length)
 	return 0;
 }
 
+/**
+ * @brief recv() wrapper that reads exactly @p length bytes unless peer closes the connection
+ *
+ * @param fd connected socket file descriptor
+ * @param buffer destination buffer
+ * @param length required number of bytes
+ * @return 1 when all bytes are received, 0 when peer closes before completion, -1 on syscall error
+ */
 static int recv_all(int fd, void *buffer, size_t length)
 {
 	char *cursor = buffer;
 	size_t remaining = length;
+	// Important: recv() can return fewer bytes than requested even when the connection is healthy.
+	// We keep reading until we collect exactly the amount requested by the caller.
 	while (remaining > 0)
 	{
 		ssize_t recvd = recv(fd, cursor, remaining, 0);
 		if (recvd < 0)
 		{
+			// EINTR: interrupted by signal, retry safely.
 			if (errno == EINTR)
 			{
 				continue;
 			}
 			return -1;
 		}
+		// recv()==0 means peer closed the connection (EOF on socket).
+		// Caller can decide whether this is expected or an error for current phase.
 		if (recvd == 0)
 		{
 			return 0;
@@ -150,6 +177,8 @@ inline ERROR_CODE create_message(LOGIN_SESSION_ENVIRONMENT* login_env, MESSAGE* 
 
 int main(int argc, char** argv)
 {
+	// PHASE 0:
+	// Print a startup banner so the user immediately knows the client process has started correctly.
     printf("Welcome to PGM client!\n");
     P("Printing ascii art and name");
     fprintf(stdout, "%s", ascii_art);
@@ -165,7 +194,7 @@ int main(int argc, char** argv)
 
 	P(">>> argc = %d", argc);
 
-	if(argc >= 2) // If username passed as parameter
+	if(argc >= 2) // If username passed as parameter, skip interactive prompt so scripts/tests can run non-interactively
 	{
 		P(">>> Username passed as parameter: %s", argv[1]);
 		snprintf(env.sender, USERNAME_SIZE_CHARS, "%s", argv[1]);
@@ -176,6 +205,9 @@ int main(int argc, char** argv)
 		do
 		{
 			printf(">>>Input your username:\n>");
+			// Why fflush here:
+			// this prompt ends with '>' and not with '\n', so line-buffered stdout may keep it in memory.
+			// We flush manually to guarantee the prompt is visible before waiting for user input.
 			fflush(stdout);
 
 			char *ret;
@@ -190,11 +222,13 @@ int main(int argc, char** argv)
 			env.sender[strcspn(env.sender, "\n")] = '\0'; // remove newline for network send
 
 			P(">>> Read name: %s\nWould you like to continue the login with this username? [Y/n]", env.sender);
+			// Same rationale as above: ensure the confirmation prompt is printed before we block on fgetc().
 			fflush(stdout);
 
 			redo = (unsigned char)(fgetc(stdin));
 			int c;
-			while ((c = getchar()) != '\n' && c != EOF) { } // flush trailing input
+			// Consume any extra characters left on stdin so the next fgets() starts from a clean line.
+			while ((c = getchar()) != '\n' && c != EOF) { }
 		} while (redo == 'n' || redo == 'N');
 	}
 
@@ -203,13 +237,17 @@ int main(int argc, char** argv)
 	/* -------------------------------------------------------------------------- */
 	/*                              CONNECT TO SOCKET                             */
 	/* -------------------------------------------------------------------------- */
-	// open IPv4 socket, ask server IP, send username and wait for a response
+	// PHASE 2:
+	// Collect server endpoint information (IP + port), create the TCP socket, then establish the connection.
 	
 		int sockfd = -1;
 		struct sockaddr_in srv = {0};
 		char server_ip[INET_ADDRSTRLEN];
 
 		P("[%s] >>> Enter server IPv4 address (default is local 0.0.0.0) (e.g. 192.168.1.10):", env.sender);
+		// Why fflush here:
+		// the prompt has no final newline, so it may stay buffered and invisible to the user.
+		// Flushing now guarantees the user sees exactly what is being asked.
 		fflush(stdout);
 		if(argc >= 3) // If server ip passed as parameter
 		{
@@ -224,7 +262,8 @@ int main(int argc, char** argv)
 				return (1);
 			}
 		}
-		/* strip newline */
+		// fgets() keeps the trailing newline when there is space in the buffer.
+		// We remove it because parsing/validation/network code expects a clean C string token.
 		server_ip[strcspn(server_ip, "\n")] = '\0';
 		if (strlen(server_ip) == 0) { // default to local
 			P("[%s] >>> Defaulting to local server IP", env.sender);
@@ -235,6 +274,7 @@ int main(int argc, char** argv)
 		// Ask for the server port for the user
 		char port_input[16] = {0};
 		printf("Enter server port (default is 6666) (1-65535):\n>");
+		// Same prompt-visibility reason: flush before blocking on stdin.
 		fflush(stdout);
 		if(argc >= 4)
 		{
@@ -257,6 +297,8 @@ int main(int argc, char** argv)
 		P("[%s] >>> Server port input: %s", env.sender, port_input);
 
 		char *endptr = NULL;
+		// strtol() is used instead of atoi() so we can validate:
+		// 1) if no number was parsed, and 2) if the value is outside valid port range.
 		long port_long = strtol(port_input, &endptr, 10);
 		if (endptr == port_input || port_long <= 0 || port_long > 65535) {
 			P("[%s] >>> Invalid port number port_input:port_long[%s]:[%ld]", env.sender, port_input, port_long);
@@ -270,7 +312,8 @@ int main(int argc, char** argv)
 			return(1);
 		}
 
-		srv.sin_family = AF_INET;
+		srv.sin_family = AF_INET; // This socket speaks IPv4.
+		// Port in sockaddr_in must be stored in network byte order, not host byte order.
 		srv.sin_port = htons(SERVER_PORT);
 		if (unlikely(inet_pton(AF_INET, server_ip, &srv.sin_addr) <= 0)) {
 			PSE("[%s] >>> Invalid IPv4 address", env.sender);
@@ -293,23 +336,33 @@ int main(int argc, char** argv)
 		/*                            SERVER AUTHENTICATION                           */
 		/* -------------------------------------------------------------------------- */
 	{
-		/* prepare username and send */
+		// PHASE 3:
+		// Login handshake with the server.
+		// First we send username, then we follow registration or authentication based on server response.
 		char* username = &env.sender[0];
+		// Hard safety terminator to avoid accidental non-null-terminated strings in edge cases.
 		username[USERNAME_SIZE_CHARS - 1] = '\0';
+		// If username came from fgets(), remove trailing newline so server receives just the name.
 		username[strcspn(username, "\n")] = '\0';
 
 		P("[%s] >>> Sending username: %s", env.sender, username);
 
-		ssize_t sent = send(sockfd, username, strlen(username) + 1, 0); /* also send the null byte */
+		// We send strlen(username) + 1 so that the terminating '\0' is sent too.
+		// This lets the server safely treat the payload as a standard C string.
+		ssize_t sent = send(sockfd, username, strlen(username) + 1, 0);
 		if (unlikely(sent < 0)) {
 			PSE("[%s] >>> send()", env.sender);
 			close(sockfd);
 			return(1);
 		}
 
-		/* wait for a response from server (ERROR_CODE) */
+		// Wait for the first server decision code:
+		// - START_REGISTRATION => user does not exist and must register
+		// - NO_ERROR          => user exists, continue with password authentication
 		ERROR_CODE server_code = ERROR;
-		ssize_t recvd = recv(sockfd, &server_code, sizeof(server_code), MSG_WAITALL); /* MSG_WAITALL On  SOCK_STREAM  sockets this requests that the function block until the full amount of data can be returned. The function may return the smaller amount of data if the socket is a message-based socket, if a signal is caught, if the connection is  termi-nated, if MSG_PEEK was specified, or if an error is pending for the socket. */
+		// We expect a fixed-size ERROR_CODE packet here.
+		// MSG_WAITALL asks recv() to wait until all bytes of that packet arrive (or until error/close).
+		ssize_t recvd = recv(sockfd, &server_code, sizeof(server_code), MSG_WAITALL);
 		if (unlikely(recvd != sizeof(server_code))) {
 			PSE("[%s] >>> Failed to receive initial server code (got %zd bytes)", env.sender, recvd);
 			close(sockfd);
@@ -319,9 +372,10 @@ int main(int argc, char** argv)
 
 		// Depending on the server response code, either register or authenticate
 		if (unlikely(server_code == START_REGISTRATION)) { // registration path
-			/* registration path */
+			// Registration path: server did not find this user and asks for initial password setup.
 			char password[PASSWORD_SIZE_CHARS];
 			printf("User not found, please register.\nInsert new password:\n>");
+			// Prompt ends with '>' (no newline), so flush manually before reading input.
 			fflush(stdout);
 
 			if(argc >= 5)
@@ -339,6 +393,7 @@ int main(int argc, char** argv)
 			}
 			password[strcspn(password, "\n")] = '\0';
 
+			// Same framing used for username: include terminating '\0' so server reads a full C string.
 			sent = send(sockfd, password, strlen(password) + 1, 0);
 			if (unlikely(sent < 0)) {
 				PSE("[%s] >>> Failed to send registration password", env.sender);
@@ -360,7 +415,7 @@ int main(int argc, char** argv)
 			P("[%s] >>> Registration successful", env.sender);
 
 		} else if (server_code == NO_ERROR) { // authentication path
-			/* existing user, perform login */
+			// Existing-user path: user exists, so run password authentication loop.
 			// const int MAX_PASSWORD_ATTEMPTS = 3; --- DEFINED IN 3-Global-Variables-and-Functions.h ---
 
 			int attempt = 0;
@@ -369,6 +424,7 @@ int main(int argc, char** argv)
 
 			while (attempt < MAX_PASSWORD_ATTEMPTS && !authenticated) {
 				printf("Insert password:\n>");
+				// Flush prompt before blocking on stdin, for the same reason explained above.
 				fflush(stdout);
 
 				if (argc >= 5)
@@ -387,6 +443,7 @@ int main(int argc, char** argv)
 				}
 				password[strcspn(password, "\n")] = '\0';
 
+				// Same protocol framing: send password as null-terminated C string.
 				sent = send(sockfd, password, strlen(password) + 1, 0);
 				if (unlikely(sent < 0)) {
 					PSE("[%s] >>> Failed to send password attempt", env.sender);
@@ -405,6 +462,8 @@ int main(int argc, char** argv)
 					P("[%s] >>> Authentication successful", env.sender);
 					authenticated = 1;
 				} else {
+					// Increase attempts only on failed authentication responses.
+					// This keeps MAX_PASSWORD_ATTEMPTS semantics clear and predictable.
 					attempt++;
 					P("[%s] >>> Authentication failed: %s (%d/%d)", env.sender, convert_error_code_to_string(server_code), attempt, MAX_PASSWORD_ATTEMPTS);
 					if (attempt >= MAX_PASSWORD_ATTEMPTS) {
@@ -430,6 +489,8 @@ int main(int argc, char** argv)
 	int running = 1;
 	while (running)
 	{
+		// PHASE 4A:
+		// Show the operations menu and convert user choice into an internal MESSAGE_CODE request.
 		printf("\nSelect operation:\n");
 		printf("  [1] Send message\n");
 		printf("  [2] List registered users\n");
@@ -437,9 +498,12 @@ int main(int argc, char** argv)
 		printf("  [4] Load unread messages list\n");
 		printf("  [5] Delete message\n");
 		printf("  [q] Quit\n> ");
+		// Menu prompt ends with '>' and no newline, so flush now to make it visible immediately.
 		fflush(stdout);
 
-		// Allow for a more "dirty" input reading, we will just read a line and take the first non-specia character
+		// Input strategy:
+		// read the whole line first, then pick the first non-whitespace character.
+		// This is tolerant to accidental spaces or extra trailing characters.
 		char choice_buf[16] = {0};
 		if (unlikely(fgets(choice_buf, sizeof(choice_buf), stdin) == NULL))
 		{
@@ -448,7 +512,8 @@ int main(int argc, char** argv)
 		}
 		P("[%s] >>> Read choice: %s", env.sender, choice_buf);
 
-		// Take the first non-special character (clean input)
+		// Extract first non-whitespace character as command selector.
+		// Examples that map correctly to the same choice: "1", "1\n", "   1", "1 anything".
 		char choice = '\0';
 		for (size_t i = 0; choice_buf[i] != '\0'; i++)
 		{
@@ -463,7 +528,7 @@ int main(int argc, char** argv)
 		MESSAGE_CODE request_code = MESSAGE_ERROR;
 		switch (choice)
 		{
-		case '1':
+		case '1': // Accept both numeric and mnemonic aliases, so menu usage is faster and more forgiving.
 		case 's':
 		case 'S':
 			request_code = REQUEST_SEND_MESSAGE;
@@ -501,8 +566,12 @@ int main(int argc, char** argv)
 			{
 			case REQUEST_SEND_MESSAGE:
 			{
+				// PHASE 4B:
+				// Send message flow:
+				// 1) gather input, 2) send operation code + header, 3) wait server validation, 4) send body.
 				char recipient[USERNAME_SIZE_CHARS] = {0};
 				printf("Insert recipient username:\n>");
+				// Prompt has no trailing newline, therefore explicit flush is needed before reading.
 				fflush(stdout);
 				if (unlikely(fgets(recipient, sizeof(recipient), stdin) == NULL))
 				{
@@ -514,6 +583,7 @@ int main(int argc, char** argv)
 
 				char subject[SUBJECT_SIZE_CHARS] = {0};
 				printf("Insert message subject (max %u chars):\n>", SUBJECT_SIZE_CHARS - 1);
+				// Same reason: force prompt visibility before blocking on fgets().
 				fflush(stdout);
 				if (unlikely(fgets(subject, sizeof(subject), stdin) == NULL))
 				{
@@ -530,6 +600,7 @@ int main(int argc, char** argv)
 
 				char message_buf[MESSAGE_SIZE_CHARS + 1] = {0};
 				printf("Insert message body (max %u chars):\n>", MESSAGE_SIZE_CHARS);
+				// Same reason again: do not rely on automatic line-buffer flush here.
 				fflush(stdout);
 				if (unlikely(fgets(message_buf, sizeof(message_buf), stdin) == NULL))
 				{
@@ -539,6 +610,8 @@ int main(int argc, char** argv)
 				}
 				message_buf[strcspn(message_buf, "\n")] = '\0';
 
+				// Protocol step 1:
+				// tell the server which operation is requested before sending any operation-specific data.
 				if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
 				{
 					PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
@@ -546,6 +619,8 @@ int main(int argc, char** argv)
 					break;
 				}
 
+				// We send only the fixed-size MESSAGE header first.
+				// The variable-size body is sent later, but only if server accepts metadata/recipient checks.
 				size_t header_size = offsetof(MESSAGE, message);
 				MESSAGE *header = calloc(1, header_size);
 				if (unlikely(header == NULL))
@@ -558,6 +633,7 @@ int main(int argc, char** argv)
 				snprintf(header->recipient, sizeof(header->recipient), "%s", recipient);
 				snprintf(header->subject, sizeof(header->subject), "%s", subject);
 				size_t body_len = strlen(message_buf);
+				// message_length is part of network payload, so convert host byte order -> network byte order.
 				header->message_length = htonl((uint32_t)body_len);
 
 				if (unlikely(send_all(sockfd, header, header_size) < 0))
@@ -568,6 +644,8 @@ int main(int argc, char** argv)
 					break;
 				}
 
+				// Wait for server pre-check result before sending body.
+				// This avoids sending large payload data when recipient/metadata is invalid.
 				ERROR_CODE server_code = ERROR;
 				if (unlikely(recv_all(sockfd, &server_code, sizeof(server_code)) <= 0))
 				{
@@ -583,6 +661,7 @@ int main(int argc, char** argv)
 					break;
 				}
 
+				// Body is sent as raw bytes without '\0': receiver already knows exact length from header->message_length.
 				if (likely(body_len > 0))
 				{
 					if (unlikely(send_all(sockfd, message_buf, body_len) < 0))
@@ -600,6 +679,9 @@ int main(int argc, char** argv)
 			}
 		case REQUEST_LIST_REGISTERED_USERS:
 		{
+			// PHASE 4C:
+			// Request the registered users list.
+			// Protocol pattern is: receive length prefix -> send ack -> receive variable-size payload.
 			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
 			{
 				PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
@@ -614,8 +696,10 @@ int main(int argc, char** argv)
 				running = 0;
 				break;
 			}
+			// Convert list length from network byte order to host byte order before using it.
 			uint32_t list_len = ntohl(list_len_net);
 
+			// Send explicit ack so server knows client is ready for the variable-size list payload.
 			ERROR_CODE ack = NO_ERROR;
 			if (unlikely(send_all(sockfd, &ack, sizeof(ack)) < 0))
 			{
@@ -648,6 +732,8 @@ int main(int argc, char** argv)
 		}
 		case REQUEST_LOAD_MESSAGE:
 		{
+			// PHASE 4D:
+			// Ask server for available message filenames, let user choose one, then download and print that message.
 			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
 			{
 				PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
@@ -662,6 +748,7 @@ int main(int argc, char** argv)
 				running = 0;
 				break;
 			}
+			// Length prefix is sent over the network, so convert it back to host byte order.
 			uint32_t list_len = ntohl(list_len_net);
 
 			ERROR_CODE ack = NO_ERROR;
@@ -693,6 +780,7 @@ int main(int argc, char** argv)
 			if (list[0] == '\0')
 			{
 				P("[%s] >>> No messages available", env.sender);
+				// Tell the server we are aborting this operation so it does not wait for a file selection code/name.
 				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
 				send_all(sockfd, &abort_code, sizeof(abort_code));
 				free(list);
@@ -702,6 +790,7 @@ int main(int argc, char** argv)
 			size_t entry_count = 0;
 			for (size_t i = 0; list[i] != '\0'; i++)
 			{
+				// Server sends list entries separated by '\n', so counting newlines gives number of entries.
 				if (list[i] == '\n')
 				{
 					entry_count++;
@@ -725,6 +814,7 @@ int main(int argc, char** argv)
 			{
 				if (list[i] == '\n')
 				{
+					// Replace separator with '\0' and reuse existing buffer (in-place tokenization, no extra copies).
 					list[i] = '\0';
 					if (idx < entry_count)
 					{
@@ -740,6 +830,7 @@ int main(int argc, char** argv)
 				printf("  [%zu] %s\n", i, entries[i]);
 			}
 			printf("Select message number or 'q' to cancel:\n>");
+			// Prompt has no trailing newline, flush now so it is visible before fgets().
 			fflush(stdout);
 
 			char choice_line[32] = {0};
@@ -756,6 +847,7 @@ int main(int argc, char** argv)
 
 			if (choice_line[0] == 'q' || choice_line[0] == 'Q')
 			{
+				// User canceled from client side: send explicit abort code so server can close this request cleanly.
 				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
 				send_all(sockfd, &abort_code, sizeof(abort_code));
 				free(entries);
@@ -775,6 +867,7 @@ int main(int argc, char** argv)
 				break;
 			}
 
+			// After list stage, server expects a second operation code indicating we selected one specific message.
 			MESSAGE_CODE select_code = REQUEST_LOAD_SPECIFIC_MESSAGE;
 			if (unlikely(send_all(sockfd, &select_code, sizeof(select_code)) < 0))
 			{
@@ -839,6 +932,7 @@ int main(int argc, char** argv)
 				header->recipient[strcspn(header->recipient, "\n")] = '\0';
 				header->subject[strcspn(header->subject, "\n")] = '\0';
 
+				// message_length in the header is serialized in network byte order, convert before using it.
 				uint32_t body_len = ntohl(header->message_length);
 				if (unlikely(body_len == 0 || body_len > MESSAGE_SIZE_CHARS))
 				{
@@ -871,6 +965,7 @@ int main(int argc, char** argv)
 				}
 				body[body_len] = '\0';
 
+				// Final step of this operation: render loaded message in human-readable terminal format.
 				printf("\nMessage loaded:\n");
 				printf("  From: %s\n", header->sender);
 				printf("  To: %s\n", header->recipient);
@@ -885,6 +980,8 @@ int main(int argc, char** argv)
 		}
 		case REQUEST_LOAD_UNREAD_MESSAGES:
 		{
+			// PHASE 4E:
+			// Load unread messages list using the same length-prefix + ack handshake pattern.
 			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
 			{
 				PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
@@ -899,6 +996,7 @@ int main(int argc, char** argv)
 				running = 0;
 				break;
 			}
+			// Convert payload length from network order to host order before allocation/read.
 			uint32_t list_len = ntohl(list_len_net);
 
 			ERROR_CODE ack = NO_ERROR;
@@ -933,6 +1031,9 @@ int main(int argc, char** argv)
 		}
 		case REQUEST_DELETE_MESSAGE:
 		{
+			// PHASE 4F:
+			// Delete flow is similar to load-message flow:
+			// get list -> choose entry -> send selected filename -> receive delete result.
 			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
 			{
 				PSE("[%s] >>> Failed to send MESSAGE_CODE", env.sender);
@@ -947,6 +1048,7 @@ int main(int argc, char** argv)
 				running = 0;
 				break;
 			}
+			// Convert payload length from network order to host order before allocation/read.
 			uint32_t list_len = ntohl(list_len_net);
 
 			ERROR_CODE ack = NO_ERROR;
@@ -978,6 +1080,7 @@ int main(int argc, char** argv)
 			if (list[0] == '\0')
 			{
 				P("[%s] >>> No messages available", env.sender);
+				// Tell server this request is intentionally aborted, so it does not wait for a selection.
 				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
 				send_all(sockfd, &abort_code, sizeof(abort_code));
 				free(list);
@@ -1010,6 +1113,7 @@ int main(int argc, char** argv)
 			{
 				if (list[i] == '\n')
 				{
+					// Reuse list buffer by replacing '\n' separators with '\0' terminators.
 					list[i] = '\0';
 					if (idx < entry_count)
 					{
@@ -1025,6 +1129,7 @@ int main(int argc, char** argv)
 				printf("  [%zu] %s\n", i, entries[i]);
 			}
 			printf("Select message number to delete or 'q' to cancel:\n>");
+			// Prompt has no trailing newline, so flush to keep interaction immediate and clear.
 			fflush(stdout);
 
 			char choice_line[32] = {0};
@@ -1041,6 +1146,7 @@ int main(int argc, char** argv)
 
 			if (choice_line[0] == 'q' || choice_line[0] == 'Q')
 			{
+				// User canceled delete operation from menu: notify server with explicit abort code.
 				MESSAGE_CODE abort_code = MESSAGE_OPERATION_ABORTED;
 				send_all(sockfd, &abort_code, sizeof(abort_code));
 				free(entries);
@@ -1060,6 +1166,7 @@ int main(int argc, char** argv)
 				break;
 			}
 
+			// After list exchange, server expects this code to indicate "one concrete entry was selected".
 			MESSAGE_CODE select_code = REQUEST_LOAD_SPECIFIC_MESSAGE;
 			if (unlikely(send_all(sockfd, &select_code, sizeof(select_code)) < 0))
 			{
@@ -1105,6 +1212,8 @@ int main(int argc, char** argv)
 			break;
 		}
 		case LOGOUT:
+			// PHASE 4G:
+			// Graceful termination path: notify server with LOGOUT code, then break local loop.
 			if (unlikely(send_all(sockfd, &request_code, sizeof(request_code)) < 0))
 			{
 				PSE("[%s] >>> Failed to send LOGOUT", env.sender);
