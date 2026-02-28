@@ -146,16 +146,18 @@ Upon closing the connection, the thread cleanup routine includes:
 
 - Removes the entry from the `current_loggedin_users_bitmap`.
 
-
+---
 
 ## Signal handling
-Actual implementation (server-side): explicit handling of `SIGINT`/`SIGTERM` with a dedicated signal thread.  
-`SIGPIPE` is avoided by using `MSG_NOSIGNAL` in socket sends (`send_all`), rather than process-wide `SIGPIPE` ignore.
 
-#### Actual shutdown plan used in code
-- Global flag: `volatile sig_atomic_t shutdown_now`.
-- In `main`, `SIGINT` and `SIGTERM` are blocked with `pthread_sigmask`.
-- A dedicated thread runs `sigwait()` on that blocked set.
+The explicit handling of `SIGINT`/`SIGTERM` is done by a dedicated signal thread.  
+The main problem is `SIGPIPE` when sending on broken connection, that is avoided by using `MSG_NOSIGNAL` in socket sends (`send_all` declared in `3-Global-Variables-and-Functions.c`).
+
+### Shutdown phase
+
+- In `main`, `SIGINT` and `SIGTERM` are blocked with `pthread_sigmask`, that enables the signal mask to be inherited by worker threads.
+- Global flag: `volatile sig_atomic_t shutdown_now` is set by the signal thread when `SIGINT`/`SIGTERM` is received.
+  - Said signal thread runs `sigwait()` on the blocked signal set.
 - When `sigwait()` receives `SIGINT`/`SIGTERM`, the signal thread:
   - calls `shutdown(listen_fd, SHUT_RDWR)`,
   - calls `close(listen_fd)`,
@@ -163,24 +165,29 @@ Actual implementation (server-side): explicit handling of `SIGINT`/`SIGTERM` wit
 - Main accept loop checks `shutdown_now`:
   - before calling `accept()`,
   - after `accept()` failure.
-- During global shutdown, the main thread also calls `shutdown(fd, SHUT_RDWR)` on active client sockets, then joins worker threads.
+- During global shutdown:
+    - The main thread calls `shutdown(fd, SHUT_RDWR)` on active client sockets, so that worker threads will wake up from blocking `recv()` calls and check `shutdown_now` to exit.
+    - Then joins worker threads to ensure all threads finished their cleanup before closing the whole application.
 
-#### Worker-side behavior used in code
+### Worker-side behavior
+
 - Worker send path uses `send(..., MSG_NOSIGNAL)` inside `send_all`.
 - Worker receive path uses `recv_all` and handles:
   - `recv == 0` as peer disconnect,
-  - `errno == EINTR` as retry.
+  - `errno == EINTR` as retry. (Even if `SIGINT`/`SIGTERM` are blocked, other signals can cause `recv()` to be interrupted)
 - Keepalive is enabled on each accepted socket:
-  - `SO_KEEPALIVE`,
+  - `SO_KEEPALIVE`, the only one currently enabled in the code, is required to enable TCP keepalive probes. So that client disconnections will eventually be detected by the server, even if the client doesn't close the connection properly. This ensures that there are no ghost loggedin users.
   - `TCP_KEEPIDLE`,
   - `TCP_KEEPINTVL`,
   - `TCP_KEEPCNT`.
 This is used to reduce ghost/stale connections.
 
 #### SO_RCVTIMEO (optional extension, not currently enabled in code)
+
 - Current code does **not** set `SO_RCVTIMEO`.
 - It can be useful to make blocking `recv()` wake up periodically, so worker loops can check `shutdown_now` without waiting indefinitely on quiet sockets.
-- Suggested compile-time switches if this behavior is added:
+- It is not considered necessary since the `SO_KEEPALIVE` mechanism will eventually detect dead connections, but it can be a useful addition to make shutdown more responsive.
+- The behaviour can be controlled by two compile-time macros, but needs some addetional code to handle the `EAGAIN`/`EWOULDBLOCK` errors from `recv()` as timeout wakeups:
   - `ENABLE_SOCKET_RCVTIMEO` (feature toggle),
   - `SOCKET_RCVTIMEO_SECONDS` (timeout value, e.g. `60`).
 - Suggested behavior when enabled:
@@ -188,9 +195,9 @@ This is used to reduce ghost/stale connections.
   - Treat `EAGAIN` / `EWOULDBLOCK` as timeout wakeups, then re-check `shutdown_now` and continue/exit accordingly.
 
 
-
-
 # DEBUG
-### Hold connection mode in the server
+
+## Hold connection mode in the server
+
 Use the `DEBUG` flag during application compilation to enable debug output in the server.
-If the applcation is not compiled with the `DEBUG` flag, the debug output function will not be even present within the code. This was a personal choice I've made so that the executable's size can be made smaller and there is no need to include other conditional jumps every time a debug message gets printed. 
+If the applcation is not compiled with the `DEBUG` flag, the debug output function will not be even present within the code. This was a personal choice I've made so that the executable's size can be made smaller and there is no need to include other conditional jumps every time a debug message gets printed.
