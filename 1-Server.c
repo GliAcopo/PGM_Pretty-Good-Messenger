@@ -283,7 +283,7 @@ static int32_t parse_port_string(const char *string_port, int32_t port_desired_f
  * @return ERROR_CODE NO_ERROR on success, SYSCALL_ERROR on failure
  * @note This function is inspired to the linux man example getifaddrs(3)
  */
-ERROR_CODE print_local_ip_addresses(uint16_t port)
+static ERROR_CODE print_local_ip_addresses(uint16_t port)
 {
     // We use getifaddrs to get the list of network interfaces on the machine
     struct ifaddrs *ifaddr;   // why bother allocating two pointers? because ifsddrs is actually a linked list! So we need to maintain a head pointer or else we won't be able to free the memory
@@ -654,12 +654,11 @@ static char *build_list_of_registered_users(size_t *output_length) // We use a p
        In the glibc implementation, the dirent structure is defined as follows:
 
            struct dirent {
-               ino_t          d_ino;       // /* Inode number *
-               off_t          d_off;       // /* Not an offset; see below *
-               unsigned short d_reclen;    // /* Length of this record *
-               unsigned char  d_type;      // /* Type of file; not supported
-                                           //   by all filesystem types *
-               char           d_name[256]; // /* Null-terminated filename *
+               ino_t          d_ino;       // Inode number
+               off_t          d_off;       // Not an offset; see below
+               unsigned short d_reclen;    // Length of this record
+               unsigned char  d_type;      // Type of file; not supported by all filesystem types
+               char           d_name[256]; // Null-terminated filename
            };
     */
     while ((directory_entry = readdir(directory)) != NULL) // While there are still entries to read within the directory we check if they are user folders
@@ -1077,7 +1076,7 @@ static char *build_list_from_files(char **files, size_t count, size_t *out_len)
 /*                                          SIGNAL HANDLER (THREAD)                                              */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
-void *signal_handler_thread(void *arg)
+static void *signal_handler_thread(void *arg)
 {
     sigset_t *set = (sigset_t *)arg;
     int sig;
@@ -1115,7 +1114,7 @@ void *signal_handler_thread(void *arg)
 /*                                          COONNECTION HANDLER (THREAD)                                         */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
-void *thread_routine(void *arg)
+static void *thread_routine(void *arg)
 {
     thread_args_t *thread_args = (thread_args_t *)arg;
     int connection_fd = thread_args->connection_fd;
@@ -2529,7 +2528,7 @@ int main(int argc, char** argv)
     /* -------------------------------------------------------------------------- */
 
     // Now we accept connections in loop, each connection will be handled by a different thread
-    size_t thread_args_connections_index = 0;// The index of the array to keep track where to write
+    size_t thread_args_connections_index = 0; // The index of the array to keep track where to write
     // Why does this not overwrite other thread ids? because we set the size of the thread id array to MAX_BACKLOG, which is the maximum number of connections that can be waiting at the same time, so we are sure that by the time we overwrite a thread id, the corresponding thread will have finished and its id will not be useful anymore (since we are not joining the threads, we do not care about their ids after they finish)
     // From [https://blog.clusterweb.com.br/?p=4854] "To summarize, if the TCP implementation in Linux receives the ACK packet of the 3-way handshake and the accept queue is full, it will basically ignore that packet."
     // MOVED TO START OF THE DOCUMENT FOR GLOBAL ACCESS   // The thread id array in which we store the thread ids
