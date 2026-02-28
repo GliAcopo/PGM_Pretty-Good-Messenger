@@ -1145,7 +1145,7 @@ void *thread_routine(void *arg)
     P("[%d]::: Handling login...", connection_fd);
 
     //  1) Receive username
-    ssize_t received = recv(connection_fd, &login_env.sender, sizeof(login_env.sender), 0);
+    ssize_t received = recv_all(connection_fd, &login_env.sender, sizeof(login_env.sender));
     if (unlikely(received <= 0))
     {
         PSE("::: Error receiving username for connection fd: %d", connection_fd);
@@ -1250,7 +1250,7 @@ void *thread_routine(void *arg)
         P("[%d]::: Sent START_REGISTRATION to [%s]", connection_fd, login_env.sender);
 
         // Receive password chosen by the client
-        received = recv(connection_fd, client_password, sizeof(client_password), 0);
+        received = recv_all(connection_fd, client_password, sizeof(client_password));
         if (unlikely(received <= 0))
         {
             PSE("::: Failed to receive registration password for [%s]", login_env.sender);
@@ -1366,7 +1366,7 @@ void *thread_routine(void *arg)
         int authenticated = 0;  // boolean flag, 0 = false, 1 = true
         while (attempts < MAX_PASSWORD_ATTEMPTS && !authenticated)
         {
-            received = recv(connection_fd, client_password, sizeof(client_password), 0);
+            received = recv_all(connection_fd, client_password, sizeof(client_password));
             if (unlikely(received <= 0))
             {
                 PSE("::: Failed to receive password attempt %d for [%s]", attempts + 1, login_env.sender);
