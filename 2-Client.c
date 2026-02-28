@@ -146,7 +146,7 @@ int main(int argc, char** argv)
 			env.sender[strcspn(env.sender, "\n")] = '\0'; // remove newline for network send
 
 			P(">>> Read name: %s\nWould you like to continue the login with this username? [Y/n]", env.sender);
-			// Same rationale as above: ensure the confirmation prompt is printed before we block on fgetc().
+			// Same as above: ensure the confirmation prompt is printed before we block on fgetc().
 			fflush(stdout);
 
 			redo = (unsigned char)(fgetc(stdin));
