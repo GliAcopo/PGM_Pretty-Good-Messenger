@@ -20,6 +20,7 @@
 #include <pthread.h>    // pthread_create, pthread_t, pthread_exit
 #include <sys/socket.h> // socket, bind, listen, accept
 #include <netinet/in.h> // struct sockaddr_in, INADDR_ANY
+#include <netinet/tcp.h> // TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT
 #include <arpa/inet.h>  // inet_ntoa
 #include <ifaddrs.h>    // struct ifaddrs, getifaddrs, freeifaddrs
 #include <netdb.h>      // NI_MAXHOST, getnameinfo
@@ -77,6 +78,7 @@ static void lock_shutdown_arrays_or_exit(unsigned int max_retries);
 static void unlock_shutdown_arrays_or_exit(unsigned int max_retries);
 static int sanitize_username(const char *value);
 static int sanitize_filename(const char *value);
+static ERROR_CODE configure_client_keepalive(int client_fd);
 
 /**
  * @brief 
@@ -156,6 +158,85 @@ static void unlock_shutdown_arrays_or_exit(unsigned int max_retries)
         sched_yield(); // LINUX MAN: sched_yield() causes the calling thread to relinquish the CPU.  The thread is moved to the end of the queue for its static priority and a new thread gets to run.
         continue; // Try again
     }
+}
+
+/**
+ * @brief Enables TCP keepalive on a worker socket so disconnected clients do not block the thread forever
+ * @return NO_ERROR on success, SYSCALL_ERROR on failure
+ */
+static ERROR_CODE configure_client_keepalive(int client_fd)
+{
+    if (unlikely(client_fd < 0))
+    {
+        return NULL_PARAMETERS;
+    }
+    /*
+        int setsockopt(int sockfd, int level, int optname, const void optval[.optlen], socklen_t optlen);
+        setsockopt()  manipulate  options for the socket referred to by the file descriptor sockfd.
+       Options may exist at multiple protocol levels; they are always present at the uppermost socket level.
+
+       When manipulating socket options, the level at which the option resides and the name of  the  option  must  be
+       specified.   To  manipulate options at the sockets API level, level is specified as SOL_SOCKET.  To manipulate
+       options at any other level the protocol number of the appropriate protocol controlling the option is supplied.
+       For example, to indicate that an option is to be interpreted by the TCP protocol, level should be set  to  the
+       protocol number of TCP; see getprotoent(3).
+
+       The  arguments  optval  and  optlen  are used to access option values for setsockopt().  For getsockopt() they
+       identify a buffer in which the value for the requested option(s) are to be returned.  For getsockopt(), optlen
+       is a value-result argument, initially containing the size of the buffer pointed to by optval, and modified  on
+       return  to  indicate the actual size of the value returned.  If no option value is to be supplied or returned,
+       optval may be NULL.
+
+       Optname and any specified options are passed uninterpreted to the appropriate protocol module for  interpreta-
+       tion.   The  include  file <sys/socket.h> contains definitions for socket level options, described below.  Op-
+       tions at other protocol levels vary in format and name; consult the appropriate entries in section  4  of  the
+       manual.
+
+       Most  socket-level  options  utilize  an  int  argument  for optval.  For setsockopt(), the argument should be
+       nonzero to enable a boolean option, or zero if the option is to be disabled.
+
+       For a description of the available socket options see socket(7) and the appropriate protocol man pages.
+    */
+    /*
+        man 2 setsockopt
+        man 7 socket (SOL_SOCKET, SO_KEEPALIVE)
+        man 7 tcp (TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT)
+    */
+    int enable_keepalive = 1; // non-zero enables keepalive
+    if (unlikely(setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &enable_keepalive, sizeof(enable_keepalive)) < 0)) // level=SOL_SOCKET (socket API layer), opt=SO_KEEPALIVE (turn on keepalive probes)
+    {
+        PSE("Failed to enable SO_KEEPALIVE on fd: %d", client_fd);
+        return SYSCALL_ERROR; // Propagate error to caller
+    }
+
+#ifdef TCP_KEEPIDLE
+    int keep_idle_seconds = 30; // seconds idle before first probe
+    if (unlikely(setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keep_idle_seconds, sizeof(keep_idle_seconds)) < 0)) // level=IPPROTO_TCP (TCP layer), opt=TCP_KEEPIDLE (idle threshold)
+    {
+        PSE("Failed to set TCP_KEEPIDLE on fd: %d", client_fd);
+        return SYSCALL_ERROR;
+    }
+#endif
+
+#ifdef TCP_KEEPINTVL
+    int keep_interval_seconds = 10; // seconds between probes
+    if (unlikely(setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keep_interval_seconds, sizeof(keep_interval_seconds)) < 0)) // level=IPPROTO_TCP, opt=TCP_KEEPINTVL (probe interval)
+    {
+        PSE("Failed to set TCP_KEEPINTVL on fd: %d", client_fd);
+        return SYSCALL_ERROR;
+    }
+#endif
+
+#ifdef TCP_KEEPCNT
+    int keep_probe_count = 3; // max unanswered probes before drop
+    if (unlikely(setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPCNT, &keep_probe_count, sizeof(keep_probe_count)) < 0)) // level=IPPROTO_TCP, opt=TCP_KEEPCNT (retry count)
+    {
+        PSE("Failed to set TCP_KEEPCNT on fd: %d", client_fd);
+        return SYSCALL_ERROR;
+    }
+#endif
+
+    return NO_ERROR;
 }
 
 /**
@@ -428,18 +509,24 @@ static void remove_loggedin_user(int index)
     unlock_loggedin_users_or_exit();
 }
 
-/** 
- * @brief: this function assures that all data that needs to be sent is sent through the socket, if some data is left, then  */
+/**
+ * @brief: This function assures that all data that needs to be sent is sent through the socket, if some data is left, then we send it again until all data is sent, if the connection is closed by the client, then it returns -1, otherwise it returns 0 on success
+ * 
+ * @param fd 
+ * @param buffer 
+ * @param length 
+ * @return int 
+ */
 static int send_all(int fd, const void *buffer, size_t length)
 {
-    const char *p = (const char *)buffer;
-    size_t left = length;
+    const char *p = (const char *)buffer; // Pointer to the initial byte of the buffer we need to sent (cursor)
+    size_t left = length;                 // Byte of data left to send
 
     while (left)
     {
-        const ssize_t n = send(fd, p, left, 0);
+        const ssize_t n = send(fd, p, left, MSG_NOSIGNAL);
 
-        if (likely(n > 0))
+        if (likely(n > 0)) // There is still some data left
         {
             p += n;
             left -= (size_t)n;
@@ -447,17 +534,29 @@ static int send_all(int fd, const void *buffer, size_t length)
         }
 
         if (n == 0)
-            return -1;
+        {
+            return -1; // Data was not sent because the connection was closed by the client, we propagate the error and we make the handling in the caller
+        }
 
-        if (errno == EINTR)
+        if (unlikely(errno == EINTR)) // Blocked by signal (shlould never happen because of the signal mask)
+        {
             continue;
+        }
 
-        return -1;
+        return -1;  // Any other error we treat as connection closed
     }
 
     return 0;
 }
 
+/**
+ * @brief This function assures that all data that needs to be received is received through the socket, if some data is left, then we receive it again until all data is received, if the connection is closed by the client, then it returns -1, otherwise it returns 0 on success
+ * @note Refer to the function above for the comments since the functions are very similiar
+ * @param fd 
+ * @param buffer 
+ * @param length 
+ * @return int 
+ */
 static int recv_all(int fd, void *buffer, size_t length)
 {
     char *p = (char *)buffer;
@@ -488,7 +587,7 @@ static int recv_all(int fd, void *buffer, size_t length)
 
 /** 
  * @brief super easy helper function to check if a string ends with a certain suffix
- * It ain't much but keeps things clean
+ * @note It ain't much but keeps things clean
  * @return boolean
  */
 static int ends_with(const char *value, const char *suffix)
@@ -504,7 +603,7 @@ static int ends_with(const char *value, const char *suffix)
 
 /** 
  * @brief super easy helper function to check if a string starts with a certain prefix
- * Like said above
+ * @note Like said above
  * @return boolean
  */
 static int starts_with(const char *value, const char *prefix)
@@ -663,13 +762,10 @@ static char *build_list_of_registered_users(size_t *output_length) // We use a p
             return NULL;
         }
         user_list_buffer = reallocated_list;
-        
     }
-    else
-    {
-        user_list_buffer[bytes_used++] = '\0';
-        *output_length = bytes_used;
-    }
+
+    user_list_buffer[bytes_used++] = '\0';
+    *output_length = bytes_used;
     
     return user_list_buffer;
 }
@@ -1142,7 +1238,7 @@ void *thread_routine(void *arg)
     {
         // User not found -> ask client to register (using code START_REGISTRATION)
         response_code = START_REGISTRATION;
-        if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+        if (unlikely(send_all(connection_fd, &response_code, sizeof(response_code)) < 0))
         {
             PSE("::: Failed to send START_REGISTRATION to client on fd: %d", connection_fd);
             if (shutdown_now) {
@@ -1213,7 +1309,7 @@ void *thread_routine(void *arg)
         if (unlikely(add_code != NO_ERROR))
         {
             response_code = add_code;
-            if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+            if (unlikely(send_all(connection_fd, &response_code, sizeof(response_code)) < 0))
             {
                 PSE("::: Failed to send registration rejection for [%s]", login_env.sender);
                 if (shutdown_now) {
@@ -1225,7 +1321,7 @@ void *thread_routine(void *arg)
         }
 
         response_code = NO_ERROR;
-        if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+        if (unlikely(send_all(connection_fd, &response_code, sizeof(response_code)) < 0))
         {
             PSE("::: Failed to confirm registration for [%s]", login_env.sender);
             if (shutdown_now) {
@@ -1256,7 +1352,7 @@ void *thread_routine(void *arg)
 
         // Notify client that the user exists and we expect a password
         response_code = NO_ERROR;
-        if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+        if (unlikely(send_all(connection_fd, &response_code, sizeof(response_code)) < 0))
         {
             PSE("::: Failed to send login-ready code to [%s]", login_env.sender);
             if (shutdown_now) {
@@ -1289,7 +1385,7 @@ void *thread_routine(void *arg)
                 if (unlikely(add_code != NO_ERROR))
                 {
                     response_code = add_code;
-                    if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+                    if (unlikely(send_all(connection_fd, &response_code, sizeof(response_code)) < 0))
                     {
                         PSE("::: Failed to send login rejection to [%s]", login_env.sender);
                         if (shutdown_now) {
@@ -1311,7 +1407,7 @@ void *thread_routine(void *arg)
                 P("[%d]::: Wrong password for [%s] (attempt %d/%d)", connection_fd, login_env.sender, attempts, MAX_PASSWORD_ATTEMPTS);
             }
 
-            if (unlikely(send(connection_fd, &response_code, sizeof(response_code), 0) <= 0))
+            if (unlikely(send_all(connection_fd, &response_code, sizeof(response_code)) < 0))
             {
                 PSE("::: Failed to send authentication result to [%s]", login_env.sender);
                 if (shutdown_now) {
@@ -1400,8 +1496,8 @@ void *thread_routine(void *arg)
 
             header->sender[USERNAME_SIZE_CHARS - 1] = '\0';
             header->recipient[USERNAME_SIZE_CHARS - 1] = '\0';
-            header->sender[strcspn(header->sender, "\r\n")] = '\0';
-            header->recipient[strcspn(header->recipient, "\r\n")] = '\0';
+            header->sender[strcspn(header->sender, "\n")] = '\0';
+            header->recipient[strcspn(header->recipient, "\n")] = '\0';
             snprintf(header->sender, sizeof(header->sender), "%s", login_env.sender);
 
             uint32_t message_length = ntohl(header->message_length);
@@ -1410,7 +1506,12 @@ void *thread_routine(void *arg)
                 ERROR_CODE invalid = STRING_SIZE_INVALID;
                 if (unlikely(send_all(connection_fd, &invalid, sizeof(invalid)) < 0))
                 {
+                    int send_errno = errno;
                     PSE("::: Failed to send STRING_SIZE_INVALID to [%s]", login_env.sender);
+                    if (send_errno == EPIPE)
+                    {
+                        goto cleanup;
+                    }
                     if (shutdown_now) {
                         P("Shutdown flag is set, closing thread...");
                         goto cleanup;
@@ -1426,7 +1527,12 @@ void *thread_routine(void *arg)
                 ERROR_CODE not_found = USER_NOT_FOUND;
                 if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
                 {
+                    int send_errno = errno;
                     PSE("::: Failed to send USER_NOT_FOUND to [%s]", login_env.sender);
+                    if (send_errno == EPIPE)
+                    {
+                        goto cleanup;
+                    }
                     if (shutdown_now) {
                         P("Shutdown flag is set, closing thread...");
                         goto cleanup;
@@ -1460,7 +1566,12 @@ void *thread_routine(void *arg)
                 ERROR_CODE not_found = USER_NOT_FOUND;
                 if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
                 {
+                    int send_errno = errno;
                     PSE("::: Failed to send USER_NOT_FOUND to [%s]", login_env.sender);
+                    if (send_errno == EPIPE)
+                    {
+                        goto cleanup;
+                    }
                     if (shutdown_now) {
                         P("Shutdown flag is set, closing thread...");
                         goto cleanup;
@@ -1779,7 +1890,12 @@ void *thread_routine(void *arg)
                 MESSAGE_CODE not_found = MESSAGE_NOT_FOUND;
                 if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
                 {
+                    int send_errno = errno;
                     PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                    if (send_errno == EPIPE)
+                    {
+                        goto cleanup;
+                    }
                     if (shutdown_now) {
                         P("Shutdown flag is set, closing thread...");
                         goto cleanup;
@@ -1804,7 +1920,12 @@ void *thread_routine(void *arg)
                 MESSAGE_CODE not_found = MESSAGE_NOT_FOUND;
                 if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
                 {
+                    int send_errno = errno;
                     PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                    if (send_errno == EPIPE)
+                    {
+                        goto cleanup;
+                    }
                     if (shutdown_now) {
                         P("Shutdown flag is set, closing thread...");
                         goto cleanup;
@@ -2146,7 +2267,12 @@ void *thread_routine(void *arg)
                 MESSAGE_CODE not_found = MESSAGE_NOT_FOUND;
                 if (unlikely(send_all(connection_fd, &not_found, sizeof(not_found)) < 0))
                 {
+                    int send_errno = errno;
                     PSE("::: Failed to send MESSAGE_NOT_FOUND to [%s]", login_env.sender);
+                    if (send_errno == EPIPE)
+                    {
+                        goto cleanup;
+                    }
                     if (shutdown_now) {
                         P("Shutdown flag is set, closing thread...");
                         goto cleanup;
@@ -2197,7 +2323,7 @@ void *thread_routine(void *arg)
         if (!handled)
         {
             MESSAGE_CODE response_code_msg = MESSAGE_ERROR;
-            if (unlikely(send(connection_fd, &response_code_msg, sizeof(response_code_msg), 0) <= 0))
+            if (unlikely(send_all(connection_fd, &response_code_msg, sizeof(response_code_msg)) < 0))
             {
                 PSE("::: Failed to send MESSAGE_ERROR to [%s]", login_env.sender);
                 if (shutdown_now) {
@@ -2232,7 +2358,7 @@ cleanup:
     if(unlikely(close(connection_fd) < 0))
     {
         PSE("Error closing connection fd: %d", connection_fd);
-        E();
+        // E(); If we cannot close the connection we do not close the whole server, also it could happen that the client disconnected or the main did something stupid
     }
     P("[%d]:::Connection fd: %d closed, thread exiting", connection_fd, connection_fd);
     exit_thread_and_update_thread_id_array(thread_index);
@@ -2242,7 +2368,7 @@ cleanup:
 
 
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
-/*                                                   MAIN                                                   */
+/*                                                     MAIN                                                      */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 int main(int argc, char** argv)
 {
@@ -2433,7 +2559,7 @@ int main(int argc, char** argv)
         }
         P("Connection accepted from IP: %s, Port: %d, New socket file descriptor: %d", inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port), new_connection);
         
-        // Close connection if the max number of active workers is reached
+        /* ----- Close connection if the max number of active workers is reached ---- */
         lock_shutdown_arrays_or_exit(5);
         int at_capacity = (number_of_current_logged_in_users >= MAX_BACKLOG);
         unlock_shutdown_arrays_or_exit(5);
@@ -2443,8 +2569,14 @@ int main(int argc, char** argv)
             close(new_connection);
             continue;
         }
+        
+        /* ------------------------- ENABLE CLIENT KEEPALIVE ------------------------ */
+        if (unlikely(configure_client_keepalive(new_connection) != NO_ERROR))
+        {
+            P("Keepalive setup failed for connection fd: %d, continuing without keepalive", new_connection);
+        }
 
-        // CHECK IF SLOT IS FREE: ---------------------------------------
+        /* -------------------------- CHECK IF SLOT IS FREE ------------------------- */
         while (1)
         {
             lock_shutdown_arrays_or_exit(5);
@@ -2470,7 +2602,7 @@ int main(int argc, char** argv)
             */
         }
 
-        // CREATE NEW THREAD HANDLING THE CONNECTION: ---------------------------------------
+        /* ------------------------- CREATE NEW THREAD HANDLING THE CONNECTION ------------------------ */
         thread_args_t *thread_args = malloc(sizeof(thread_args_t));
         if (thread_args == NULL)
         {
