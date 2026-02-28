@@ -64,7 +64,7 @@ Note: When referring to "save the MESSAGE structure in the file" I mean that it 
     - Server replies with a `uint32_t` length prefix in network byte order, then waits for `NO_ERROR` before sending the list.
         - Client replies with `NO_ERROR`
         - Else the operation gets aborted
-        - If list is to big @todo handle send of bigger data portions (is it even necessary?).
+        - If list is to big @todo handle send of bigger data portions (is it even necessary?). (NOT IMPLEMENTED FOR NOW)
     - Server waits for `MESSAGE_CODE`
     - Client on his side prints to the user the sent list of filenames.
         - Client user chooses not to load any message.
@@ -149,47 +149,43 @@ Upon closing the connection, the thread cleanup routine includes:
 
 
 ## Signal handling
-Plan (server-side): The application will explicitly handle only `SIGINT`/`SIGTERM` and `SIGPIPE` (but the latter only in the form of return statement from `send`.).
+Actual implementation (server-side): explicit handling of `SIGINT`/`SIGTERM` with a dedicated signal thread.  
+`SIGPIPE` is avoided by using `MSG_NOSIGNAL` in socket sends (`send_all`), rather than process-wide `SIGPIPE` ignore.
 
-#### Global flag and signal thread
+#### Actual shutdown plan used in code
 - Global flag: `volatile sig_atomic_t shutdown_now`.
-- Block `SIGINT`/`SIGTERM` in all threads; create a dedicated signal-handling thread using `sigwait`.
-    - Why do I not use `pause`? Because `pause` only waits for any unblocked signal that arrives to that specific thread. Does not give me signal info. `sigwait()` does everything I need it for:
-        - From the linux man `sigwait()`: _"The sigwait() function suspends execution of the calling thread until one of the signals specified in the signal set set becomes pending.  For a signal to become pending, it must first be blocked with sigprocmask(2).  The function accepts the signal (removes it from the pending list of signals), and returns the signal number in sig."_
-- Signal thread: on `SIGINT`/`SIGTERM` set the flag, close listening socket, optionally `shutdown()` active client sockets.
+- In `main`, `SIGINT` and `SIGTERM` are blocked with `pthread_sigmask`.
+- A dedicated thread runs `sigwait()` on that blocked set.
+- When `sigwait()` receives `SIGINT`/`SIGTERM`, the signal thread:
+  - calls `shutdown(listen_fd, SHUT_RDWR)`,
+  - calls `close(listen_fd)`,
+  - sets `shutdown_now = 1`.
+- Main accept loop checks `shutdown_now`:
+  - before calling `accept()`,
+  - after `accept()` failure.
+- During global shutdown, the main thread also calls `shutdown(fd, SHUT_RDWR)` on active client sockets, then joins worker threads.
 
-#### Updates that were done to the project
-- Every call to `recv`/`send` in worker threads need to implement:
-    - set `SO_RCVTIMEO` (once per accepted socket) to 60s so `recv` wakes and checks the `shutdown_now` flag periodically
-        - note: not needed for `send`
-    - set `SO_KEEPALIVE` to handle client disconnection
-- Implement "Client disconnect handling" logic
+#### Worker-side behavior used in code
+- Worker send path uses `send(..., MSG_NOSIGNAL)` inside `send_all`.
+- Worker receive path uses `recv_all` and handles:
+  - `recv == 0` as peer disconnect,
+  - `errno == EINTR` as retry.
+- Keepalive is enabled on each accepted socket:
+  - `SO_KEEPALIVE`,
+  - `TCP_KEEPIDLE`,
+  - `TCP_KEEPINTVL`,
+  - `TCP_KEEPCNT`.
+This is used to reduce ghost/stale connections.
 
-#### Where do threads check the variable?
-- Main accept loop:
-  - before calling `accept`.
-  - after `accept` fails (if `errno == EINTR` then if listener was closed, exit, even if it should not happen if the signals get blocked correctly).
-- Worker loop:
-  - at loop top before doing work.
-  - after any `recv`/`send` error or timeout.
-  - after any `recv` returns 0 (peer closed).
-
-#### Make blocking calls wake up
-- Listening socket: close it to break `accept`.
-- Worker sockets: (or set `SO_RCVTIMEO` to ~60s so `recv` wakes and checks the flag periodically). Only to check the flag, since `SO_KEEPALIVE` will handle client disconnection.
-    - An optional alternative would have been to call `shutdown(fd, SHUT_RDWR)` from the signal thread, but it's more difficult to implement and not really needed.
-
-#### Client disconnect handling
-- Ignore `SIGPIPE` process-wide.
-    - An alternative was to implement `MSG_NOSIGNAL`/`SO_NOSIGPIPE` in all sockets. But I'll go for the first option
-- In all `send()` calls: handle `EPIPE`/`ECONNRESET` in normal send/recv checks.
-- Enable TCP keepalive (`SO_KEEPALIVE`) to avoid clients becoming ghost logins (not closing connections).
-- Worker loop rules:
-  - `recv == 0` -> cleanup.
-  - `errno == EINTR` -> even if should not happen, retry the call.
-  - `errno == EPIPE`/`ECONNRESET`/`ETIMEDOUT` -> cleanup.
-  - `recv == -1`
-    - `errno == EAGAIN/EWOULDBLOCK` -> `SO_RCVTIMEO` timeout, just check the `shutdown_now` flag
+#### SO_RCVTIMEO (optional extension, not currently enabled in code)
+- Current code does **not** set `SO_RCVTIMEO`.
+- It can be useful to make blocking `recv()` wake up periodically, so worker loops can check `shutdown_now` without waiting indefinitely on quiet sockets.
+- Suggested compile-time switches if this behavior is added:
+  - `ENABLE_SOCKET_RCVTIMEO` (feature toggle),
+  - `SOCKET_RCVTIMEO_SECONDS` (timeout value, e.g. `60`).
+- Suggested behavior when enabled:
+  - Set `SO_RCVTIMEO` once after `accept()`.
+  - Treat `EAGAIN` / `EWOULDBLOCK` as timeout wakeups, then re-check `shutdown_now` and continue/exit accordingly.
 
 
 
