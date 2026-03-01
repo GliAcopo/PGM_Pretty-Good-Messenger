@@ -1078,14 +1078,14 @@ static void *thread_routine(void *arg)
     // This is now defined in 3-Global-Variables-and-Functions.h
 
     // Handle the connection
-    LOGIN_SESSION_ENVIRONMENT login_env = {0};      // @note: initialized to zero, not really needed but I do it for best practice
+    LOGIN_SESSION_ENVIRONMENT login_env = {0};      // @note: initialized to zero but not really needed
     ERROR_CODE response_code = NO_ERROR;
     char stored_password[PASSWORD_SIZE_CHARS] = {0};
     char client_password[PASSWORD_SIZE_CHARS] = {0};
-    int current_loggedin_users_used_index = -1;
-    char *user_dir_path = NULL;
-    char *password_path = NULL;
-    char *data_path = NULL;
+    int current_loggedin_users_used_index = -1;     // Index used to track where the logged in user name is stored in the current_loggedin_users array
+    char *user_dir_path = NULL;                     // Path to the user directory
+    char *password_path = NULL;                     // Path to the password file within the user directory
+    char *data_path     = NULL;                     // Path to the data file within the user directory @warning = data file is not used in the current configuration
 
     /* -------------------------------------------------------------------------- */
     /*                            LOGIN / REGISTRATION                            */
@@ -1106,7 +1106,7 @@ static void *thread_routine(void *arg)
         goto cleanup;
     }
     login_env.sender[USERNAME_SIZE_CHARS - 1] = '\0';                     // Defensive null-termination
-    login_env.sender[strcspn(login_env.sender, "\n")] = '\0';           // Strip newline if present
+    login_env.sender[strcspn(login_env.sender, "\n")] = '\0';             // Strip newline if present
     P("[%d]::: Read username [%s]", connection_fd, login_env.sender);
     if (unlikely(!sanitize_username(login_env.sender)))
     {
@@ -1125,13 +1125,42 @@ static void *thread_routine(void *arg)
     if (unlikely(user_dir_path == NULL))
     {
         PSE("::: Failed to allocate user directory path for username: %s", login_env.sender);
-        goto cleanup;
+        goto cleanup;+
     }
     if (unlikely(snprintf(user_dir_path, user_dir_len, "%s%s", login_env.sender, folder_suffix_user) < 0))
     {
         PSE("::: Failed to build user directory path for username: %s", login_env.sender);
         goto cleanup;
     }
+
+    /* ----------- FIND USER DIRECTORY TO VERIFY IF USER IS REGISTERED ---------- */
+
+    /*
+        struct stat {
+        dev_t      st_dev;      ID of device containing file 
+        ino_t      st_ino;      Inode number 
+        mode_t     st_mode;     File type and mode 
+        nlink_t    st_nlink;    Number of hard links 
+        uid_t      st_uid;      User ID of owner 
+        gid_t      st_gid;      Group ID of owner 
+        dev_t      st_rdev;     Device ID (if special file) 
+        off_t      st_size;     Total size, in bytes 
+        blksize_t  st_blksize;  Block size for filesystem I/O 
+        blkcnt_t   st_blocks;   Number of 512 B blocks allocated 
+
+        Since POSIX.1-2008, this structure supports nanosecond
+            precision for the following timestamp fields.
+            For the details before POSIX.1-2008, see VERSIONS. 
+
+        struct timespec  st_atim;  Time of last access 
+        struct timespec  st_mtim;  Time of last modification 
+        struct timespec  st_ctim;  Time of last status change 
+
+        #define st_atime  st_atim.tv_sec  Backward compatibility 
+        #define st_mtime  st_mtim.tv_sec
+        #define st_ctime  st_ctim.tv_sec
+        };
+    */
 
     struct stat user_dir_stat = {0};
     int user_dir_missing = 0;
