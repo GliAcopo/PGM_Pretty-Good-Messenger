@@ -1,4 +1,3 @@
-Subject field implementation status: done (MESSAGE now carries Recipient, Subject, Text).
 
 # Specifiacations to be implemented
 Messaging service
