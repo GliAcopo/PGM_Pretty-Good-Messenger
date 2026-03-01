@@ -847,9 +847,9 @@ static int compare_strings_desc(const void *a, const void *b) // Compare strings
 /**
  * @brief Collects all the timestamps of the messages for the requesting user, if only_unread_messages is set to 1, then it collects only the messages that are unread (those that start with "UNREAD"), the function returns an array of strings that are the filenames of the messages, the number of files collected is returned through the output_file_count parameter
  * 
- * @param user_directory_path 
- * @param only_unread_messages 
- * @param output_file_count 
+ * @param user_directory_path string containing the path to the user directory where the message files are stored
+ * @param only_unread_messages boolean flag to toggle listing of only unread messages
+ * @param output_file_count pointer to a size_t variable that will be set to the number of collected message files
  * @return char** 
  */
 static char **collect_message_files(const char *user_directory_path, int only_unread_messages, size_t *output_file_count)
