@@ -1125,7 +1125,7 @@ static void *thread_routine(void *arg)
     if (unlikely(user_dir_path == NULL))
     {
         PSE("::: Failed to allocate user directory path for username: %s", login_env.sender);
-        goto cleanup;+
+        goto cleanup;
     }
     if (unlikely(snprintf(user_dir_path, user_dir_len, "%s%s", login_env.sender, folder_suffix_user) < 0))
     {
