@@ -201,3 +201,6 @@ This is used to reduce ghost/stale connections.
 
 Use the `DEBUG` flag during application compilation to enable debug output in the server.
 If the applcation is not compiled with the `DEBUG` flag, the debug output function will not be even present within the code. This was a personal choice I've made so that the executable's size can be made smaller and there is no need to include other conditional jumps every time a debug message gets printed.
+
+# Known issues and limitations
+- The maximum number of logged in users is limited by the `MAX_BACKLOG` constant, that is currently set to 10. This is because the `current_loggedin_users_bitmap` is an unsigned int, so it can only represent up to 32 slots. To increase the maximum number of logged in users, the bitmap type should be changed to a larger type and the corresponding code should be updated.

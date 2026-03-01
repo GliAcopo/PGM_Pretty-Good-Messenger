@@ -51,6 +51,7 @@ static const long PORT_MIN = 0, PORT_MAX = 32767, RESERVED_MAX = 1023;
 
 // CURRENT LOGGED IN USERS HANDLING
 static char *current_loggedin_users[MAX_BACKLOG] = {0}; // Array of pointers to the usernames of the currently logged in users, if a slot is NULL, then it is free, otherwise it contains the username of the logged in user. WARNING: the index of the slot is NOT used to identify the user in other arrays (thread_id_array and connections_array)
+/** @warning: SCALABILITY, to increase the max number of available slots increase the size of the bitmap from unsigned int to a larger type */
 static unsigned int current_loggedin_users_bitmap = 0;  // Which slots in the current_loggedin_users array are used, bit i is 1 if current_loggedin_users[i] contains the name of a loggedin user
 static sem_t current_loggedin_users_semaphore;
 
@@ -426,6 +427,7 @@ static void lock_loggedin_users_or_exit(void)
 
 static void unlock_loggedin_users_or_exit(void)
 {
+    // LINUX MAN (sem_post): 0 on success, -1 on error and sets errno
     if (unlikely(sem_post(&current_loggedin_users_semaphore) == -1))
     {
         PSE("sem_post() failed for current_loggedin_users_semaphore");
@@ -436,8 +438,16 @@ static void unlock_loggedin_users_or_exit(void)
     }
 }
 
+/**
+ * @brief Add the user to the list of loggedin users
+ * 
+ * @param username pointer to the null terminated string containing the username
+ * @param out_index pointer to an integer where the assigned index of the logged in user will be written
+ * @return ERROR_CODE 
+ */
 static ERROR_CODE add_loggedin_user(const char *username, int *out_index)
 {
+    
     if (unlikely(username == NULL || out_index == NULL))
     {
         return NULL_PARAMETERS;
@@ -448,9 +458,10 @@ static ERROR_CODE add_loggedin_user(const char *username, int *out_index)
     }
 
     lock_loggedin_users_or_exit();
-#ifdef DEBUG
-    P("current_loggedin_users_bitmap before login: 0x%08X", current_loggedin_users_bitmap);
-#endif
+    #ifdef DEBUG // Print the bitmap state for debug purposes
+        P("current_loggedin_users_bitmap before login: 0x%08X", current_loggedin_users_bitmap);
+    #endif
+    // Prevent double login of the same username, search the passed username in the ones already logged in
     for (int i = 0; i < MAX_BACKLOG; i++)
     {
         if (current_loggedin_users[i] != NULL && strcmp(current_loggedin_users[i], username) == 0)
@@ -460,43 +471,46 @@ static ERROR_CODE add_loggedin_user(const char *username, int *out_index)
         }
     }
 
-    char *name_copy = calloc(USERNAME_SIZE_CHARS, sizeof(char));
+    // We keep an owned copy: caller buffer may die after this function returns
+    char *name_copy = calloc(USERNAME_SIZE_CHARS, sizeof(char)); // Needs to be on heap for persistence after function return
     if (unlikely(name_copy == NULL))
     {
         unlock_loggedin_users_or_exit();
         return SYSCALL_ERROR;
     }
-    snprintf(name_copy, USERNAME_SIZE_CHARS, "%s", username);
+    snprintf(name_copy, USERNAME_SIZE_CHARS, "%s", username); //  int snprintf(char str[restrict .size], size_t size, const char *restrict format, ...);  The functions snprintf() and vsnprintf() write at most size bytes (including the terminating null byte ('\0')) to str.
 
     int slot = -1;
+    // Bitmap slot search: first 0 bit means first free seat
     for (int i = 0; i < MAX_BACKLOG; i++)
     {
-        if ((current_loggedin_users_bitmap & (1u << i)) == 0)
+        if ((current_loggedin_users_bitmap & (1u << i)) == 0) // Find the free slot
         {
             slot = i;
             break;
         }
     }
-    if (slot < 0)
+    if (slot < 0) // no free slot available
     {
         free(name_copy);
         P("No free slot in current_loggedin_users_bitmap");
-#ifdef DEBUG
-        dump_loggedin_users();
-#endif
+        #ifdef DEBUG
+            dump_loggedin_users();
+        #endif
         E();
     }
 
-    current_loggedin_users[slot] = name_copy;
-    current_loggedin_users_bitmap |= (1u << slot);
-    *out_index = slot;
-#ifdef DEBUG
-    P("current_loggedin_users_bitmap after login: 0x%08X", current_loggedin_users_bitmap);
-#endif
+    current_loggedin_users[slot] = name_copy;       // Place the username in the corresponding slot
+    current_loggedin_users_bitmap |= (1u << slot);  // Set the corresponding slot as occupied in the bitmap
+    *out_index = slot;                              // Return the assigned slot number in the namespace of the caller
+    #ifdef DEBUG
+        P("current_loggedin_users_bitmap after login: 0x%08X", current_loggedin_users_bitmap);
+    #endif
     unlock_loggedin_users_or_exit();
 
     return NO_ERROR;
 }
+
 
 static void remove_loggedin_user(int index)
 {
@@ -509,11 +523,13 @@ static void remove_loggedin_user(int index)
 #ifdef DEBUG
     P("current_loggedin_users_bitmap before logout: 0x%08X", current_loggedin_users_bitmap);
 #endif
+    // free(NULL) is safe by C standard, but explicit check keeps debug flow clearer
     if (current_loggedin_users[index] != NULL)
     {
         free(current_loggedin_users[index]);
         current_loggedin_users[index] = NULL;
     }
+    // Clear occupancy bit even if pointer was already NULL (state self-heal-ish)
     current_loggedin_users_bitmap &= ~(1u << index);
 #ifdef DEBUG
     P("current_loggedin_users_bitmap after logout: 0x%08X", current_loggedin_users_bitmap);
@@ -700,8 +716,7 @@ static char *build_list_of_registered_users(size_t *output_length) // We use a p
 
 
 /**
- * @brief Function that validates the username with a whitelist policy.
- *        Allowed chars are [A-Za-z0-9_-]. Returns 1 if valid, 0 otherwise.
+ * @brief Function that validates the name provided and returns 1 if the name contains only valid patterns (not "..", "/" or "\") and is not empty, otherwise it returns 0
  * 
  * @param value pointer to the null terminated string that contains the username to validate
  * @return int 1 if the username is valid, 0 otherwise
@@ -735,7 +750,7 @@ static int sanitize_username(const char *value)
 }
 
 /**
- * @brief Function that validates the filename provided and returns 1 if the filename does not contain any invalid patterns like "..", "/" or "\" and is not empty and ends with the expected suffix, otherwise it returns 0
+ * @brief Function that validates the filename provided and returns 1 if the filename contains only valid patterns (not "..", "/" or "\") and is not empty and ends with the expected suffix, otherwise it returns 0
  * 
  * @param value pointer to the null terminated string that contains the filename to validate
  * @return int 1 if the filename is valid, 0 otherwise
