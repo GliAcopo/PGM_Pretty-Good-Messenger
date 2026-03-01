@@ -1169,12 +1169,12 @@ static void *thread_routine(void *arg)
         if (!S_ISDIR(user_dir_stat.st_mode))
         {
             PSE("::: User path exists but is not a directory for username: %s", login_env.sender);
-            goto cleanup;
+            goto cleanup; // Error is fatal since there is a need for human intervention: The user path exists but it is not a direcory
         }
     }
     else
     {
-        if (errno == ENOENT)
+        if (errno == ENOENT) // Missing directory
         {
             user_dir_missing = 1;
         }
@@ -1185,7 +1185,8 @@ static void *thread_routine(void *arg)
         }
     }
 
-    size_t password_path_len = strlen(user_dir_path) + 1 + strlen(password_filename) + 1;
+    /* ----------- BUILD PATHS FOR PASSWORD AND DATA FILES ---------- */
+    size_t password_path_len = strlen(user_dir_path) + 1 + strlen(password_filename) + 1; // password_filename defined in 3-Global-Variables-and-Functions.h
     password_path = calloc(password_path_len, sizeof(char));
     if (unlikely(password_path == NULL))
     {
