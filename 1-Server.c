@@ -1706,6 +1706,7 @@ static void *thread_routine(void *arg)
             handled = 1;
             break;
         }
+        /* ---------------------- REQUEST_LIST_REGISTERED_USERS --------------------- */
         case REQUEST_LIST_REGISTERED_USERS:
         {
             P("[%d]::: REQUEST_LIST_REGISTERED_USERS received", connection_fd);
@@ -1767,6 +1768,7 @@ static void *thread_routine(void *arg)
             handled = 1;
             break;
         }
+        /* --------------------- REQUEST_LOAD_PREVIOUS_MESSAGES --------------------- */
         case REQUEST_LOAD_PREVIOUS_MESSAGES:
             P("[%d]::: REQUEST_LOAD_PREVIOUS_MESSAGES received (not implemented)", connection_fd);
             handled = 1;
@@ -2055,10 +2057,13 @@ static void *thread_routine(void *arg)
             handled = 1;
             break;
         }
+        /** @deprecated */
+        /* ---------------------- REQUEST_LOAD_SPECIFIC_MESSAGE --------------------- */
         case REQUEST_LOAD_SPECIFIC_MESSAGE:
             P("[%d]::: REQUEST_LOAD_SPECIFIC_MESSAGE received (not implemented)", connection_fd);
             handled = 1;
             break;
+        /* ---------------------- REQUEST_LOAD_UNREAD_MESSAGES ---------------------- */
         case REQUEST_LOAD_UNREAD_MESSAGES:
         {
             P("[%d]::: REQUEST_LOAD_UNREAD_MESSAGES received", connection_fd);
@@ -2148,6 +2153,7 @@ static void *thread_routine(void *arg)
             handled = 1;
             break;
         }
+        /* ------------------------- REQUEST_DELETE_MESSAGE ------------------------- */
         case REQUEST_DELETE_MESSAGE:
         {
             P("[%d]::: REQUEST_DELETE_MESSAGE received", connection_fd);
