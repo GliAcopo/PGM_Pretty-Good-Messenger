@@ -196,8 +196,6 @@ This is used to reduce ghost/stale connections.
 
 # DEBUG
 
-## Hold connection mode in the server
-
 Use the `DEBUG` flag during application compilation to enable debug output in the server.
 If the applcation is not compiled with the `DEBUG` flag, the debug output function will not be even present within the code. This was a personal choice I've made so that the executable's size can be made smaller and there is no need to include other conditional jumps every time a debug message gets printed.
 
