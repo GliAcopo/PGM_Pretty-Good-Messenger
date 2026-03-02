@@ -1643,9 +1643,10 @@ static void *thread_routine(void *arg)
                 goto cleanup;
             }
 
+            /* -------------------------- MESSAGE FILE CREATION ------------------------- */
             int msg_fd = -1;
             char message_path[USERNAME_SIZE_CHARS + 64] = {0};
-            for (unsigned int counter = 0; counter < 1000; counter++)
+            for (unsigned int counter = 0; counter < 1000; counter++) // Try to create file exclusively with up to 1000 different names (in case of name clash), if this is not possible then just fail
             {
                 if (counter == 0)
                 {
@@ -1661,16 +1662,16 @@ static void *thread_routine(void *arg)
                 msg_fd = open(message_path, O_CREAT | O_EXCL | O_WRONLY, 0600);
                 if (msg_fd >= 0)
                 {
-                    break;
+                    break; // Success branch
                 }
-                if (errno != EEXIST)
+                if (errno != EEXIST) // If the error is NOT EEXIST then we have a bigger problem
                 {
                     PSE("::: Failed to open message file for [%s]", header->recipient);
-                    break;
+                    break; // Fatal
                 }
             }
 
-            if (msg_fd < 0)
+            if (msg_fd < 0) // handle fatal
             {
                 PSE("::: Unable to create message file for [%s]", header->recipient);
                 free(recipient_dir);
