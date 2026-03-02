@@ -295,7 +295,7 @@ int main(int argc, char** argv)
 		ERROR_CODE server_code = ERROR;
 		// We expect a fixed-size ERROR_CODE packet
 		// MSG_WAITALL asks recv() to wait until all bytes of that packet arrive (or until error/close).
-		ssize_t recvd = recv(sockfd, &server_code, sizeof(server_code), MSG_WAITALL);
+		ssize_t recvd = recv(sockfd, &server_code, sizeof(server_code), MSG_WAITALL); // Might need to change it to recv_all(), but we use MSG_WAITALL here
 		if (unlikely(recvd != sizeof(server_code)))
 		{
 			PSE("[%s] >>> Failed to receive initial server code (got %zd bytes)", env.sender, recvd);

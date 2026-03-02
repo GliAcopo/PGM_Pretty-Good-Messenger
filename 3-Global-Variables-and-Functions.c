@@ -57,6 +57,13 @@ const char *convert_error_code_to_string(const ERROR_CODE code)
     }
 }
 
+/**
+ * @brief send that loops until all EXPECTED! data is sent
+ * @param fd 
+ * @param buffer 
+ * @param length 
+ * @return int 
+ */
 int send_all(int fd, const void *buffer, size_t length)
 {
     const char *p = (const char *)buffer;
@@ -89,6 +96,14 @@ int send_all(int fd, const void *buffer, size_t length)
     return 0;
 }
 
+/**
+ * @brief recv that loops until all EXPECTED! data is sent
+ * @note Why not use MSG_WAITALL? Mostly because of signal control: (LINUX MAN: MSG_WAITALL the call may still return less data than requested if a signal is caught, an error or disconnect occurs, or the next data to be received is of a different type than that returned.)
+ * @param fd Connected socket file descriptor.
+ * @param buffer Destination buffer.
+ * @param length Expected number of bytes to read.
+ * @return 1 on success, 0 on peer close, -1 on error
+ */
 int recv_all(int fd, void *buffer, size_t length)
 {
     char *p = (char *)buffer;
