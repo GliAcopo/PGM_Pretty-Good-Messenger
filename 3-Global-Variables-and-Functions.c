@@ -136,7 +136,7 @@ int recv_all(int fd, void *buffer, size_t length)
 /*                                              MESSAGE STRUCT CREATION                                          */
 /* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
-
+/** @deprecated */
 /*
  * @brief: This fuction takes a message structure pointer and makes it ready to send
  * 	first it compiles the sender and receiver fields according to the session environment
@@ -312,6 +312,10 @@ success:
 | `0644` | rw-r--r-- | Usually for files: Owner write, others read |
 | `0555` | r-xr-xr-x | Read/execute for everyone (no write)        |
 */
+
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
+/*                                                 ART / FILE EXTENSIONS                                         */
+/* █████████████████████████████████████████████████████████████████████████████████████████████████████████████ */
 
 const char *file_suffix_user_data = ".pgm"; // Suffix for message files
 const char *folder_suffix_user = ".pgmusr"; // Suffix for program user folders
