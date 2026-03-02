@@ -240,9 +240,10 @@ int main(int argc, char** argv)
 			return(1);
 		}
 
-		srv.sin_family = AF_INET; // This socket speaks IPv4.
+		// Create the socket with the given port and server IP given by the user.
+		srv.sin_family = AF_INET; // IPv4 socket.
 		// Port in sockaddr_in must be stored in network byte order, not host byte order.
-		srv.sin_port = htons(SERVER_PORT);
+		srv.sin_port = htons(SERVER_PORT); // Needs to be in Big Endian because that's how sin_port wants it.
 		if (unlikely(inet_pton(AF_INET, server_ip, &srv.sin_addr) <= 0))
 		{
 			PSE("[%s] >>> Invalid IPv4 address", env.sender);
@@ -292,7 +293,7 @@ int main(int argc, char** argv)
 		// - START_REGISTRATION => user does not exist and must register
 		// - NO_ERROR          => user exists, continue with password authentication
 		ERROR_CODE server_code = ERROR;
-		// We expect a fixed-size ERROR_CODE packet here.
+		// We expect a fixed-size ERROR_CODE packet
 		// MSG_WAITALL asks recv() to wait until all bytes of that packet arrive (or until error/close).
 		ssize_t recvd = recv(sockfd, &server_code, sizeof(server_code), MSG_WAITALL);
 		if (unlikely(recvd != sizeof(server_code)))
@@ -511,6 +512,7 @@ int main(int argc, char** argv)
 
 			switch (request_code)
 			{
+			/* ------------------------------ SEND MESSAGE ------------------------------ */
 			case REQUEST_SEND_MESSAGE:
 			{
 				// PHASE 4B:
@@ -581,7 +583,7 @@ int main(int argc, char** argv)
 				snprintf(header->subject, sizeof(header->subject), "%s", subject);
 				size_t body_len = strlen(message_buf);
 				// message_length is part of network payload, so convert host byte order -> network byte order.
-				header->message_length = htonl((uint32_t)body_len);
+				header->message_length = htonl((uint32_t)body_len); // Message lenght is multibyte (32 bytes) so we need to convert it to Big endian
 
 				if (unlikely(send_all(sockfd, header, header_size) < 0))
 				{
@@ -624,6 +626,7 @@ int main(int argc, char** argv)
 				P("[%s] >>> Message sent", env.sender);
 				break;
 			}
+		/* ---------------------- REQUEST_LIST_REGISTERED_USERS --------------------- */	
 		case REQUEST_LIST_REGISTERED_USERS:
 		{
 			// PHASE 4C:

@@ -1506,7 +1506,8 @@ static void *thread_routine(void *arg)
                 break;
             }
 
-            uint32_t message_length = ntohl(header->message_length);
+            // Convert from Big Endian to host since message_length is multibyte 32 bit usigned
+            uint32_t message_length = ntohl(header->message_length); // LINUX MAN: The htonl() function converts the unsigned integer hostlong from host byte order to network byte order.
             if (message_length == 0 || message_length > MESSAGE_SIZE_CHARS)
             {
                 ERROR_CODE invalid = STRING_SIZE_INVALID;
